@@ -8,15 +8,10 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/gin-gonic/gin"
 	"github.com/lib/pq"
 )
 
-func init() {
-	gin.SetMode(gin.TestMode)
-}
-
-func newTestRouter(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
+func newTestServer(t *testing.T) (http.Handler, sqlmock.Sqlmock) {
 	t.Helper()
 	mockDB, mock, err := sqlmock.New()
 	if err != nil {
@@ -25,27 +20,27 @@ func newTestRouter(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 	t.Cleanup(func() { mockDB.Close() })
 
 	h := New(mockDB)
-	r := gin.New()
-	r.POST("/auth/register", h.Register)
-	return r, mock
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /auth/register", h.Register)
+	return mux, mock
 }
 
-func doJSON(r *gin.Engine, method, path, body string) *httptest.ResponseRecorder {
+func doJSON(srv http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	srv.ServeHTTP(w, req)
 	return w
 }
 
 func TestRegisterSuccess(t *testing.T) {
-	r, mock := newTestRouter(t)
+	srv, mock := newTestServer(t)
 
 	mock.ExpectExec("INSERT INTO users").
 		WithArgs(sqlmock.AnyArg(), "alice@example.com", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	w := doJSON(r, "POST", "/auth/register",
+	w := doJSON(srv, "POST", "/auth/register",
 		`{"email":"Alice@Example.com","password":"correct horse battery staple"}`)
 
 	if w.Code != http.StatusCreated {
@@ -73,12 +68,12 @@ func TestRegisterSuccess(t *testing.T) {
 }
 
 func TestRegisterDuplicateEmail(t *testing.T) {
-	r, mock := newTestRouter(t)
+	srv, mock := newTestServer(t)
 
 	mock.ExpectExec("INSERT INTO users").
 		WillReturnError(&pq.Error{Code: "23505"})
 
-	w := doJSON(r, "POST", "/auth/register",
+	w := doJSON(srv, "POST", "/auth/register",
 		`{"email":"taken@example.com","password":"correct horse battery staple"}`)
 
 	if w.Code != http.StatusConflict {
@@ -94,29 +89,29 @@ func TestRegisterDuplicateEmail(t *testing.T) {
 }
 
 func TestRegisterMalformedJSON(t *testing.T) {
-	r, _ := newTestRouter(t)
+	srv, _ := newTestServer(t)
 
-	w := doJSON(r, "POST", "/auth/register", `{not json`)
+	w := doJSON(srv, "POST", "/auth/register", `{not json`)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
 
 func TestRegisterPasswordTooLong(t *testing.T) {
-	r, _ := newTestRouter(t)
+	srv, _ := newTestServer(t)
 
 	pw := strings.Repeat("a", 73)
 	body := `{"email":"a@b.com","password":"` + pw + `"}`
-	w := doJSON(r, "POST", "/auth/register", body)
+	w := doJSON(srv, "POST", "/auth/register", body)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
 
 func TestRegisterInvalidEmail(t *testing.T) {
-	r, _ := newTestRouter(t)
+	srv, _ := newTestServer(t)
 
-	w := doJSON(r, "POST", "/auth/register",
+	w := doJSON(srv, "POST", "/auth/register",
 		`{"email":"not-an-email","password":"correct horse battery staple"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)

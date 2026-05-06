@@ -2,48 +2,67 @@ package middleware
 
 import (
 	"log"
+	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
-
+	"github.com/kyenel64/invosit-api/internal/httpx"
 	"github.com/kyenel64/invosit-api/internal/ids"
 )
 
-// Logger replaces gin.Logger() with one that:
-//   - Logs method, path (no query string), status, duration, request id, userID if present.
-//   - Surfaces any internal_error stashed by httpx.InternalError to stderr,
-//     so 500s aren't silent.
-//   - Sets X-Request-ID on the response so clients can quote it in bug reports.
+// Logger logs method, path (no query string), status, duration, request ID,
+// and userID if set in context. Sets X-Request-ID on every response so
+// clients can quote it in bug reports.
 //
 // Never logs: bodies, query strings, Authorization headers, refresh tokens.
-func Logger() gin.HandlerFunc {
-	return func(c *gin.Context) {
+func Logger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		requestID := ids.New("req")
 
-		c.Set("request_id", requestID)
-		c.Writer.Header().Set("X-Request-ID", requestID)
+		ctx := httpx.WithRequestID(r.Context(), requestID)
+		w.Header().Set("X-Request-ID", requestID)
 
-		c.Next()
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r.WithContext(ctx))
 
-		dur := time.Since(start)
-		method := c.Request.Method
-		path := c.Request.URL.Path
-		status := c.Writer.Status()
-
-		userID, _ := c.Get("userID")
 		userField := ""
-		if uid, ok := userID.(string); ok && uid != "" {
+		if uid := httpx.UserID(ctx); uid != "" {
 			userField = " user=" + uid
 		}
 
 		log.Printf("req=%s method=%s path=%s status=%d dur=%s%s",
-			requestID, method, path, status, dur, userField)
+			requestID, r.Method, r.URL.Path, rec.statusOrDefault(), time.Since(start), userField)
+	})
+}
 
-		if errVal, ok := c.Get("internal_error"); ok {
-			if err, ok := errVal.(error); ok && err != nil {
-				log.Printf("req=%s internal_error=%q", requestID, err.Error())
-			}
-		}
+// statusRecorder captures the response status so the logger can record it
+// after the handler returns. Defaults to 200 if the handler called Write
+// without an explicit WriteHeader.
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if !s.wroteHeader {
+		s.status = code
+		s.wroteHeader = true
 	}
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if !s.wroteHeader {
+		s.status = http.StatusOK
+		s.wroteHeader = true
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+func (s *statusRecorder) statusOrDefault() int {
+	if s.status == 0 {
+		return http.StatusOK
+	}
+	return s.status
 }

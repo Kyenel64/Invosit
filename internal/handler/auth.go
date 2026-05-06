@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/lib/pq"
 
 	"github.com/kyenel64/invosit-api/internal/auth"
@@ -14,8 +13,8 @@ import (
 )
 
 type registerRequest struct {
-	Email    string `json:"email"    binding:"required,email,max=255"`
-	Password string `json:"password" binding:"required,min=8,max=72"`
+	Email    string `json:"email"    validate:"required,email,max=255"`
+	Password string `json:"password" validate:"required,min=8,max=72"`
 }
 
 type userView struct {
@@ -23,10 +22,10 @@ type userView struct {
 	Email string `json:"email"`
 }
 
-func (h *Handler) Register(c *gin.Context) {
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpx.RespondError(c, http.StatusBadRequest, "INVALID_REQUEST", "invalid email or password")
+	if err := httpx.Bind(r, &req); err != nil {
+		httpx.RespondError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid email or password")
 		return
 	}
 
@@ -35,28 +34,28 @@ func (h *Handler) Register(c *gin.Context) {
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		if errors.Is(err, auth.ErrPasswordTooLong) {
-			httpx.RespondError(c, http.StatusBadRequest, "INVALID_REQUEST", "password too long")
+			httpx.RespondError(w, http.StatusBadRequest, "INVALID_REQUEST", "password too long")
 			return
 		}
-		httpx.InternalError(c, err)
+		httpx.InternalError(w, r, err)
 		return
 	}
 
 	id := ids.User()
-	if _, err := h.db.ExecContext(c.Request.Context(),
+	if _, err := h.db.ExecContext(r.Context(),
 		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)`,
 		id, email, hash,
 	); err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			httpx.RespondError(c, http.StatusConflict, "REGISTRATION_FAILED", "could not create account")
+			httpx.RespondError(w, http.StatusConflict, "REGISTRATION_FAILED", "could not create account")
 			return
 		}
-		httpx.InternalError(c, err)
+		httpx.InternalError(w, r, err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"user": userView{ID: id, Email: email},
 	})
 }

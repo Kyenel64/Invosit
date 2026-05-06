@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"database/sql"
-	"log"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
-
-	"github.com/gin-gonic/gin"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/kyenel64/invosit-api/internal/db"
 	"github.com/kyenel64/invosit-api/internal/handler"
@@ -14,65 +18,95 @@ import (
 )
 
 func main() {
+	if err := run(context.Background(), os.Args, os.Getenv, os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
 
-	// Load env
-	port := os.Getenv("PORT")
+// Starts the HTTP server, and blocks until ctx is cancelled (signal) or the server returns an error.
+func run(
+	ctx context.Context,
+	args []string,
+	getenv func(string) string,
+	stdout, stderr io.Writer,
+) error {
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	port := getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	databaseURL := os.Getenv("DATABASE_URL")
+	databaseURL := getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+		return errors.New("DATABASE_URL is required")
 	}
 
-	// Connect to db
+	migrationsDir := getenv("MIGRATIONS_DIR")
+	if migrationsDir == "" {
+		migrationsDir = "migrations"
+	}
+
 	database, err := db.Open(databaseURL)
 	if err != nil {
-		log.Fatalf("could not connect to database: %v", err)
+		return fmt.Errorf("open db: %w", err)
 	}
 	defer database.Close()
 
-	// Apply pending schema migrations before serving any requests
-	if err := db.Migrate(database, "migrations"); err != nil {
-		log.Fatalf("migration failed: %v", err)
+	if err := db.Migrate(database, migrationsDir); err != nil {
+		return fmt.Errorf("migrate: %w", err)
 	}
 
-	// Gin router
-	r := gin.New()
-	r.Use(gin.Recovery())
-	r.Use(middleware.Logger())
-	r.Use(middleware.BodyLimit(10 << 20))
-
-	registerRoutes(r, database)
-
-	log.Printf("starting server on: %s", port)
-	if err := r.Run(":" + port); err != nil {
-		log.Fatalf("server error: %v", err)
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           NewServer(database),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
-}
 
-func registerRoutes(r *gin.Engine, database *sql.DB) {
-	api := r.Group("/api/v1")
-
-	api.GET("/health", healthHandler(database))
-
-	h := handler.New(database)
-	api.POST("/auth/register", h.Register)
-}
-
-func healthHandler(database *sql.DB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if err := database.Ping(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status": "error",
-				"error":  "database unreachable",
-			})
-			return
+	serverErr := make(chan error, 1)
+	go func() {
+		fmt.Fprintf(stdout, "starting server on: %s\n", port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
 		}
+		close(serverErr)
+	}()
 
-		c.JSON(http.StatusOK, gin.H{
-			"status": "ok",
-		})
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			return fmt.Errorf("server error: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		fmt.Fprintln(stdout, "shutdown signal received")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		return nil
 	}
+}
+
+// NewServer builds the application's http.Handler — mux, routes, and the
+// global middleware stack. Returned as a single http.Handler so callers
+// (and tests) only see one composed handler.
+func NewServer(database *sql.DB) http.Handler {
+	mux := http.NewServeMux()
+	h := handler.New(database)
+	handler.AddRoutes(mux, h)
+
+	// request -> Recovery -> Logger -> BodyLimit -> mux -> handler
+	chain := middleware.Chain(
+		middleware.Recovery,
+		middleware.Logger,
+		middleware.BodyLimit(10<<20),
+	)
+	return chain(mux)
 }

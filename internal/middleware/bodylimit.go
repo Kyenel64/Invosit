@@ -1,17 +1,15 @@
 package middleware
 
-import (
-	"net/http"
-
-	"github.com/gin-gonic/gin"
-)
+import "net/http"
 
 // BodyLimit caps the size of request bodies. Reading past the limit
-// inside a handler will yield an error and MaxBytesReader will write
-// 413 Request Entity Too Large + close the connection.
-func BodyLimit(max int64) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, max)
-		c.Next()
+// inside a handler will yield a *http.MaxBytesError; MaxBytesReader also
+// signals the underlying connection so the client receives 413.
+func BodyLimit(max int64) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, max)
+			next.ServeHTTP(w, r)
+		})
 	}
 }

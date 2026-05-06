@@ -44,8 +44,9 @@ The API never sees plaintext file content. Ever.
 
 | Layer | Technology |
 |---|---|
-| Language | Go 1.22+ |
-| HTTP framework | Gin |
+| Language | Go 1.26+ |
+| HTTP framework | Go stdlib `net/http` (no third-party router) |
+| Validation | `go-playground/validator/v10` (struct tags) |
 | Database | Postgres |
 | Cache / rate limiting | Redis |
 | Blob storage | Pluggable — R2 (default), S3, GCS |
@@ -72,7 +73,9 @@ invosit-api/
 │   │   ├── storage.go       # interface definition only
 │   │   ├── s3.go            # AWS S3 + Cloudflare R2 (S3-compatible, diff endpoint)
 │   │   └── gcs.go           # Google Cloud Storage
-│   ├── middleware/          # security middleware (see middleware section)
+│   ├── middleware/          # net/http middleware (see middleware section)
+│   ├── httpx/               # JSON bind/respond helpers, request ctx accessors
+│   ├── ids/                 # prefixed random ID generator
 │   ├── handler/             # HTTP handlers, one file per resource group
 │   │   ├── auth.go
 │   │   ├── workspace.go
@@ -94,42 +97,54 @@ invosit-api/
 
 ---
 
-## Gin setup and routing
+## Routing and middleware
 
-Use `gin.New()` not `gin.Default()` — we define our own middleware explicitly
-so we control exactly what gets logged and recovered:
+We use stdlib `net/http` only — `http.ServeMux` with the method+path pattern
+syntax added in Go 1.22. No third-party router. Path params come from
+`r.PathValue("name")`.
+
+Middleware is the standard `func(http.Handler) http.Handler` shape and
+composed via `middleware.Chain`. Auth-scoped and workspace-scoped routes are
+expressed by wrapping subsets of routes with extra middleware before they
+land on the mux — there is no Gin-style "router group", and we don't need one.
 
 ```go
-r := gin.New()
+mux := http.NewServeMux()
 
-// Global middleware
-r.Use(middleware.Recovery())
-r.Use(middleware.Logger())
-r.Use(middleware.SecurityHeaders())
-r.Use(middleware.RateLimiter(redisClient))
-r.Use(middleware.RequestSizeLimit(10 << 20)) // 10MB max
+// Public — no auth
+mux.HandleFunc("POST /api/v1/auth/register", h.auth.Register)
+mux.HandleFunc("POST /api/v1/auth/login",    h.auth.Login)
+mux.HandleFunc("POST /api/v1/auth/refresh",  h.auth.Refresh)
 
-// Public routes — no auth
-public := r.Group("/api/v1")
-public.POST("/auth/register", h.auth.Register)
-public.POST("/auth/login", h.auth.Login)
-public.POST("/auth/refresh", h.auth.Refresh)
+// Authenticated — wrap individual handlers with the JWT middleware
+authed := middleware.JWT(jwtSecret)
+mux.Handle("POST /api/v1/auth/logout",  authed(http.HandlerFunc(h.auth.Logout)))
+mux.Handle("GET  /api/v1/auth/me",      authed(http.HandlerFunc(h.auth.Me)))
+mux.Handle("GET  /api/v1/workspaces",   authed(http.HandlerFunc(h.workspace.List)))
+mux.Handle("POST /api/v1/workspaces",   authed(http.HandlerFunc(h.workspace.Create)))
 
-// Authenticated routes
-authed := r.Group("/api/v1")
-authed.Use(middleware.JWT(jwtSecret))
-authed.POST("/auth/logout", h.auth.Logout)
-authed.GET("/auth/me", h.auth.Me)
-authed.GET("/workspaces", h.workspace.List)
-authed.POST("/workspaces", h.workspace.Create)
-
-// Workspace-scoped — also checks workspace membership
-ws := authed.Group("/workspaces/:workspaceId")
-ws.Use(middleware.WorkspaceMember(db))
-ws.GET("", h.workspace.Get)
-ws.DELETE("", h.workspace.Delete)
-ws.GET("/members", h.members.List)
+// Workspace-scoped — JWT + workspace membership
+wsmw := middleware.Compose(authed, middleware.WorkspaceMember(db))
+mux.Handle("GET    /api/v1/workspaces/{workspaceId}",         wsmw(http.HandlerFunc(h.workspace.Get)))
+mux.Handle("DELETE /api/v1/workspaces/{workspaceId}",         wsmw(http.HandlerFunc(h.workspace.Delete)))
+mux.Handle("GET    /api/v1/workspaces/{workspaceId}/members", wsmw(http.HandlerFunc(h.members.List)))
 // ... etc
+
+// Global middleware — outermost first
+chain := middleware.Chain(
+    middleware.Recovery,
+    middleware.Logger,
+    middleware.BodyLimit(10 << 20),
+)
+
+srv := &http.Server{
+    Addr:              ":" + port,
+    Handler:           chain(mux),
+    ReadHeaderTimeout: 10 * time.Second,
+    ReadTimeout:       30 * time.Second,
+    WriteTimeout:      30 * time.Second,
+    IdleTimeout:       60 * time.Second,
+}
 ```
 
 Handlers receive dependencies via a struct — no global state:
@@ -141,6 +156,16 @@ type Handler struct {
     redis   *redis.Client
 }
 ```
+
+Handler funcs use the standard signature:
+
+```go
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) { ... }
+```
+
+For per-request state (request ID, user ID), use `r.Context()` plus the
+typed accessors in `internal/httpx`. Never store request-scoped data in
+package-level variables.
 
 ---
 
@@ -252,8 +277,9 @@ compromised, files remain encrypted and unreadable.
 - Refresh token rotation on every use — old token invalidated, new token issued
 - **Token reuse detection**: if a used refresh token is presented again,
   treat as token theft — immediately invalidate ALL tokens for that user
-- JWT middleware extracts user ID from token and attaches to Gin context —
-  never trust user ID from request body or query params
+- JWT middleware extracts user ID from token and attaches it to the request
+  context via `httpx.WithUserID` — never trust user ID from request body
+  or query params
 
 ### Authorization — three layers
 
@@ -278,14 +304,27 @@ Redis-backed, per IP:
 
 ### Input validation
 
-Gin binding tags on all request structs:
+`go-playground/validator/v10` struct tags on all request structs. Decode +
+validate via `httpx.Bind`, which uses `json.DisallowUnknownFields` and
+returns an error on either malformed JSON or failed validation:
 
 ```go
 type LoginRequest struct {
-    Email    string `json:"email" binding:"required,email,max=255"`
-    Password string `json:"password" binding:"required,min=8,max=128"`
+    Email    string `json:"email"    validate:"required,email,max=255"`
+    Password string `json:"password" validate:"required,min=8,max=128"`
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+    var req LoginRequest
+    if err := httpx.Bind(r, &req); err != nil {
+        httpx.RespondError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid email or password")
+        return
+    }
+    // ...
 }
 ```
+
+Never echo validator error text back to the client — map to a safe message.
 
 Additional validation rules:
 - File paths: reject `..` traversal, absolute paths, null bytes, path separators
@@ -355,13 +394,19 @@ Development: allow localhost. Never use wildcard `*` in production.
 
 ## Middleware stack (in order)
 
+All middleware is `func(http.Handler) http.Handler`. Outermost runs first;
+`middleware.Chain(A, B, C)(h)` produces `A(B(C(h)))`.
+
+Global (wraps the entire mux):
 1. **Recovery** — catch panics, return 500, log stack trace server-side only
-2. **Logger** — log method, path, status, duration, userID, IP — never bodies
+2. **Logger** — log method, path, status, duration, userID, IP — never bodies; sets `X-Request-ID`
 3. **SecurityHeaders** — set all security response headers
 4. **RateLimiter** — Redis per-IP, stricter on auth routes
-5. **RequestSizeLimit** — reject bodies over 10MB before they're read
-6. **JWT** — validate Bearer token, attach `userID` to context (auth routes exempt)
-7. **WorkspaceMember** — verify membership in `:workspaceId` (workspace routes only)
+5. **BodyLimit** — `http.MaxBytesReader` at 10MB
+
+Per-route (wraps specific handlers):
+6. **JWT** — validate Bearer token, attach `userID` to request context (auth routes only)
+7. **WorkspaceMember** — verify membership for `{workspaceId}` (workspace routes only)
 
 ---
 
@@ -446,7 +491,11 @@ error server-side with request ID for tracing.
 
 ## Conventions
 
-- `gin.New()` not `gin.Default()` — explicit middleware only
+- Stdlib `net/http` only — no third-party router or web framework
+- `http.ServeMux` 1.22+ patterns: `"POST /api/v1/auth/register"`, `"GET /workspaces/{id}"`
+- All middleware is `func(http.Handler) http.Handler`; compose with `middleware.Chain`
+- Decode + validate request bodies via `httpx.Bind` (rejects unknown JSON fields)
+- Read user ID / request ID from `r.Context()` via `httpx` accessors — never globals
 - No global state — all dependencies injected via handler struct
 - `database/sql` directly — no ORM, parameterised queries only
 - Migrations: numbered SQL files (`001_init.sql`, `002_add_environments.sql`)

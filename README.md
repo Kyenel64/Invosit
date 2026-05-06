@@ -2,15 +2,15 @@
 
 > API server for [Invosit](https://github.com/yourorg/invosit) — git sidecar for files that shouldn't be in git.
 
-Built with Go + Gin, Postgres, Redis, and pluggable blob storage (R2 / S3 / GCS).
-Security is the core design principle — files are encrypted client-side before
-they ever reach this server.
+Built with Go (stdlib `net/http`), Postgres, Redis, and pluggable blob storage
+(R2 / S3 / GCS). Security is the core design principle — files are encrypted
+client-side before they ever reach this server.
 
 ---
 
 ## Requirements
 
-- Go 1.22+
+- Go 1.26+
 - Docker + Docker Compose
 - A blob storage bucket (Cloudflare R2, AWS S3, or GCS)
 
@@ -182,7 +182,8 @@ invosit-api/
 │   ├── audit/           # audit log
 │   ├── storage/         # storage interface + R2/S3/GCS implementations
 │   ├── middleware/      # JWT, rate limiting, security headers, logging
-│   └── handler/         # Gin HTTP handlers
+│   ├── httpx/           # JSON bind/respond helpers, request ctx
+│   └── handler/         # net/http handlers, one file per resource group
 ├── migrations/          # SQL migration files
 └── docs/
     └── openapi.yaml
