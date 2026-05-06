@@ -30,6 +30,11 @@ func main() {
 	}
 	defer database.Close()
 
+	// Apply pending schema migrations before serving any requests
+	if err := db.Migrate(database, "migrations"); err != nil {
+		log.Fatalf("migration failed: %v", err)
+	}
+
 	// Gin router
 	r := gin.New()
 	r.Use(gin.Recovery())
