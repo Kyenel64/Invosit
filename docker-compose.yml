@@ -9,24 +9,27 @@ services:
         condition: service_healthy
     environment:
       PORT: 8080
-      DATABASE_URL: postgres://invosit:secret@postgres:5432/invosit?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://redis:6379
     ports:
       - "127.0.0.1:8080:8080"
+    networks:
+      - default
+      - proxy
 
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: invosit
-      POSTGRES_PASSWORD: secret
-      POSTGRES_DB: invosit
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U invosit -d invosit"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -43,6 +46,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+networks:
+  default:
+  proxy:
+    external: true
 
 volumes:
   postgres_data:
