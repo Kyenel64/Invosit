@@ -1,0 +1,13 @@
+@host = http://localhost:8080/api/v1
+
+### Health
+GET {{host}}/health
+
+### Register
+POST {{host}}/auth/register
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "correct horse battery staple"
+}

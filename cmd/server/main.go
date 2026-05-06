@@ -7,7 +7,9 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/kyenel64/invosit-api/internal/db"
+	"github.com/kyenel64/invosit-api/internal/handler"
 )
 
 func main() {
@@ -51,7 +53,14 @@ func main() {
 func registerRoutes(r *gin.Engine, database *sql.DB) {
 	api := r.Group("/api/v1")
 
-	api.GET("/health", func(c *gin.Context) {
+	api.GET("/health", healthHandler(database))
+
+	h := handler.New(database)
+	api.POST("/auth/register", h.Register)
+}
+
+func healthHandler(database *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		if err := database.Ping(); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status": "error",
@@ -63,5 +72,5 @@ func registerRoutes(r *gin.Engine, database *sql.DB) {
 		c.JSON(http.StatusOK, gin.H{
 			"status": "ok",
 		})
-	})
+	}
 }
