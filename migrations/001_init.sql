@@ -1,11 +1,13 @@
 CREATE TABLE users (
     id             TEXT PRIMARY KEY,
-    email          TEXT UNIQUE NOT NULL,
+    email          TEXT NOT NULL,
     password_hash  TEXT,
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     public_key     TEXT,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX users_email_lower ON users ((LOWER(email)));
 
 CREATE TABLE user_identities (
     id         TEXT PRIMARY KEY,

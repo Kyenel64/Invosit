@@ -10,6 +10,7 @@ import (
 
 	"github.com/kyenel64/invosit-api/internal/db"
 	"github.com/kyenel64/invosit-api/internal/handler"
+	"github.com/kyenel64/invosit-api/internal/middleware"
 )
 
 func main() {
@@ -40,7 +41,8 @@ func main() {
 	// Gin router
 	r := gin.New()
 	r.Use(gin.Recovery())
-	r.Use(gin.Logger())
+	r.Use(middleware.Logger())
+	r.Use(middleware.BodyLimit(10 << 20))
 
 	registerRoutes(r, database)
 
