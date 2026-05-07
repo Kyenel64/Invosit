@@ -10,15 +10,10 @@ import (
 	"strings"
 )
 
-// migrationLockKey is an arbitrary bigint shared by every Invosit instance.
-// pg_advisory_lock blocks until acquired, so concurrent Migrate calls
-// (e.g. two replicas starting at once) serialise instead of racing.
 const migrationLockKey = 4242
 
-// Migrate applies any *.sql files in dir that haven't been recorded in
-// schema_migrations yet, in lexical order. Each file runs in its own
-// transaction so a failure rolls back cleanly.
-//
+// Applies any *.sql files in dir that haven't been recorded in
+// schema_migrations yet, in lexical order.
 // Filename without the .sql extension is the version string.
 func Migrate(database *sql.DB, dir string) error {
 	if _, err := database.Exec("SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
