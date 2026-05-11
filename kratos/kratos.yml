@@ -1,0 +1,141 @@
+version: v1.3.1
+
+dsn: postgres://invosit:invosit@postgres:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+
+serve:
+  public:
+    base_url: http://127.0.0.1:4433/
+    cors:
+      enabled: true
+      allowed_origins:
+        - http://127.0.0.1:8080
+      allowed_methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      allowed_headers:
+        - Authorization
+        - Cookie
+        - Content-Type
+        - X-Session-Token
+      exposed_headers:
+        - Content-Type
+        - Set-Cookie
+      allow_credentials: true
+  admin:
+    base_url: http://kratos:4434/
+
+selfservice:
+  default_browser_return_url: http://127.0.0.1:8080/
+  allowed_return_urls:
+    - http://127.0.0.1:8080
+
+  methods:
+    password:
+      enabled: true
+    profile:
+      enabled: true
+    link:
+      enabled: false
+    code:
+      enabled: false
+
+  flows:
+    error:
+      ui_url: http://127.0.0.1:8080/error
+    settings:
+      ui_url: http://127.0.0.1:8080/settings
+      privileged_session_max_age: 15m
+      required_aal: highest_available
+    recovery:
+      enabled: false
+    verification:
+      enabled: false
+    logout:
+      after:
+        default_browser_return_url: http://127.0.0.1:8080/
+    login:
+      ui_url: http://127.0.0.1:8080/login
+      lifespan: 10m
+    registration:
+      ui_url: http://127.0.0.1:8080/registration
+      lifespan: 10m
+      after:
+        password:
+          hooks:
+            - hook: web_hook
+              config:
+                url: http://api:8080/internal/hooks/kratos/after-registration
+                method: POST
+                body: file:///etc/config/kratos/hooks/after-registration.jsonnet
+                response:
+                  ignore: false
+                auth:
+                  type: api_key
+                  config:
+                    name: X-Kratos-Webhook-Secret
+                    value: REPLACE_WITH_KRATOS_WEBHOOK_SECRET
+                    in: header
+            - hook: session
+
+identity:
+  default_schema_id: default
+  schemas:
+    - id: default
+      url: file:///etc/config/kratos/identity.schema.json
+
+session:
+  lifespan: 720h
+  cookie:
+    domain: 127.0.0.1
+    path: /
+    same_site: Lax
+  whoami:
+    required_aal: aal1
+
+# Per Ory's production guide, set custom values for default, cookie,
+# and cipher. Don't rely on auto-generated defaults in production.
+# https://www.ory.com/docs/kratos/guides/production
+#
+# Each is overridden at runtime via the SECRETS_* env vars in
+# docker-compose.yml; the placeholders here are only used if the env var
+# is unset, which would be a misconfiguration.
+secrets:
+  default:
+    - REPLACE_WITH_KRATOS_DEFAULT_SECRET
+  cookie:
+    - REPLACE_WITH_KRATOS_COOKIE_SECRET
+  cipher:
+    - REPLACE_WITH_KRATOS_CIPHER_SECRET
+
+# Argon2 parameters below are MVP starter values, not calibrated for the
+# target hardware. Per Ory's guidance, run on the production VPS and
+# replace with the output:
+#   docker compose run --rm kratos hashers argon2 calibrate 1s
+# Target ~0.5–1s per hash. Too fast weakens hashing; too slow opens DoS.
+# https://www.ory.com/docs/kratos/guides/setting-up-password-hashing-parameters
+hashers:
+  algorithm: argon2
+  argon2:
+    parallelism: 1
+    memory: 128MB
+    iterations: 3
+    salt_length: 16
+    key_length: 32
+
+# SSRF mitigation for Kratos's outbound HTTP client (used by webhooks).
+# Not enabled because our after-registration webhook target (`api:8080`)
+# resolves to a Docker-network private IP. If you move the API to a public
+# domain or trust your hook URLs less, set:
+#   clients:
+#     http:
+#       disallow_private_ip_ranges: true
+# https://www.ory.com/docs/kratos/guides/production
+
+log:
+  level: info
+  format: text
+  leak_sensitive_values: false

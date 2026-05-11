@@ -17,7 +17,10 @@ servers:
 
 tags:
   - name: Auth
-    description: Login, logout, token management
+    description: |
+      Profile lookup. Registration, login, logout, password recovery, and
+      email verification are served by Ory Kratos directly (public API at
+      `:4433`, self-service UI at `:4455`) — they are not part of this API.
   - name: Workspaces
     description: Create and manage workspaces
   - name: Members
@@ -36,118 +39,17 @@ paths:
 
   # ── AUTH ──────────────────────────────────
 
-  /auth/register:
-    post:
-      tags: [Auth]
-      summary: Register a new user
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [email, password]
-              properties:
-                email:
-                  type: string
-                  format: email
-                  example: kye@invosit.dev
-                password:
-                  type: string
-                  format: password
-                  minLength: 8
-                  example: supersecret123
-      responses:
-        "201":
-          description: User created
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
-        "409":
-          description: Email already registered
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /auth/login:
-    post:
-      tags: [Auth]
-      summary: Login and receive JWT
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [email, password]
-              properties:
-                email:
-                  type: string
-                  format: email
-                  example: kye@invosit.dev
-                password:
-                  type: string
-                  format: password
-                  example: supersecret123
-      responses:
-        "200":
-          description: Login successful
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
-        "401":
-          description: Invalid credentials
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /auth/logout:
-    post:
-      tags: [Auth]
-      summary: Invalidate current refresh token
-      security:
-        - bearerAuth: []
-      responses:
-        "204":
-          description: Logged out successfully
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /auth/refresh:
-    post:
-      tags: [Auth]
-      summary: Refresh access token
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [refresh_token]
-              properties:
-                refresh_token:
-                  type: string
-                  example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-      responses:
-        "200":
-          description: New access token issued
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
   /auth/me:
     get:
       tags: [Auth]
       summary: Get current authenticated user
+      description: |
+        Resolves the current Kratos session to a local user record. The
+        session is identified either by an `Authorization: Bearer <token>`
+        header (CLI) or by the `ory_kratos_session` cookie (browser).
       security:
         - bearerAuth: []
+        - cookieAuth: []
       responses:
         "200":
           description: Current user
@@ -620,7 +522,19 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: Kratos session token
+      description: |
+        Bearer token issued by Ory Kratos and obtained via the CLI's Kratos
+        API flow (password today; OIDC / passkey / SSO via API flow with
+        token-exchange code in the future). The API forwards this header to
+        Kratos `/sessions/whoami` to validate the session.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: ory_kratos_session
+      description: |
+        Kratos session cookie (used by browser clients). The API forwards
+        the request's `Cookie` header to Kratos `/sessions/whoami`.
 
   parameters:
     workspaceId:
@@ -649,7 +563,7 @@ components:
 
   responses:
     Unauthorized:
-      description: Missing or invalid JWT
+      description: Missing or invalid Kratos session
       content:
         application/json:
           schema:
@@ -678,22 +592,6 @@ components:
         code:
           type: string
           example: NOT_FOUND
-
-    AuthResponse:
-      type: object
-      properties:
-        access_token:
-          type: string
-          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-        refresh_token:
-          type: string
-          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-        expires_in:
-          type: integer
-          description: Access token TTL in seconds
-          example: 3600
-        user:
-          $ref: "#/components/schemas/User"
 
     User:
       type: object

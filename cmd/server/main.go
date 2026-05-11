@@ -14,6 +14,7 @@ import (
 
 	"github.com/kyenel64/invosit-api/internal/db"
 	"github.com/kyenel64/invosit-api/internal/handler"
+	"github.com/kyenel64/invosit-api/internal/kratos"
 	"github.com/kyenel64/invosit-api/internal/middleware"
 )
 
@@ -49,6 +50,16 @@ func run(
 		migrationsDir = "migrations"
 	}
 
+	kratosURL := getenv("KRATOS_PUBLIC_URL")
+	if kratosURL == "" {
+		return errors.New("KRATOS_PUBLIC_URL is required")
+	}
+
+	kratosWebhookSecret := getenv("KRATOS_WEBHOOK_SECRET")
+	if kratosWebhookSecret == "" {
+		return errors.New("KRATOS_WEBHOOK_SECRET is required")
+	}
+
 	database, err := db.Open(databaseURL)
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
@@ -59,9 +70,11 @@ func run(
 		return fmt.Errorf("migrate: %w", err)
 	}
 
+	kc := kratos.NewClient(kratosURL)
+
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           NewServer(database),
+		Handler:           NewServer(database, kc, kratosWebhookSecret),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -97,9 +110,9 @@ func run(
 // NewServer builds the application's http.Handler — mux, routes, and the
 // global middleware stack. Returned as a single http.Handler so callers
 // (and tests) only see one composed handler.
-func NewServer(database *sql.DB) http.Handler {
+func NewServer(database *sql.DB, kc *kratos.Client, webhookSecret string) http.Handler {
 	mux := http.NewServeMux()
-	h := handler.New(database)
+	h := handler.New(database, kc, webhookSecret)
 	handler.AddRoutes(mux, h)
 
 	// request -> Recovery -> Logger -> BodyLimit -> mux -> handler

@@ -7,10 +7,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      kratos:
+        condition: service_healthy
     environment:
       PORT: 8080
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       REDIS_URL: redis://redis:6379
+      KRATOS_PUBLIC_URL: http://kratos:4433
+      KRATOS_WEBHOOK_SECRET: ${KRATOS_WEBHOOK_SECRET}
     ports:
       - "127.0.0.1:8080:8080"
     networks:
@@ -24,10 +28,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      KRATOS_DB_PASSWORD: ${KRATOS_DB_PASSWORD}
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -46,6 +52,35 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  kratos:
+    image: oryd/kratos:v1.3.1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4433:4433"
+    environment:
+      DSN: postgres://kratos:${KRATOS_DB_PASSWORD}@postgres:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+      SECRETS_DEFAULT: ${KRATOS_DEFAULT_SECRET}
+      SECRETS_COOKIE: ${KRATOS_COOKIE_SECRET}
+      SECRETS_CIPHER: ${KRATOS_CIPHER_SECRET}
+      SELFSERVICE_FLOWS_REGISTRATION_AFTER_PASSWORD_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE: ${KRATOS_WEBHOOK_SECRET}
+      LOG_LEVEL: info
+    volumes:
+      - ./kratos:/etc/config/kratos:ro
+    # Migrations are idempotent — run them on every boot, then serve.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        kratos migrate sql -e --yes --config /etc/config/kratos/kratos.yml &&
+        exec kratos serve --config /etc/config/kratos/kratos.yml
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4434/admin/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
 networks:
   default:

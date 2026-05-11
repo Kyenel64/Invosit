@@ -29,11 +29,16 @@ secure option even if it adds complexity.
 
 `invosit-api` is the Go API server for Invosit. It handles:
 
-- Authentication (register, login, JWT issuance, refresh token rotation)
+- Validating Kratos sessions and resolving local user records
 - Workspace and member management
 - File metadata, versioning, and access control
 - Issuing short-lived signed storage URLs for encrypted blob upload/download
 - Audit logging of every sensitive action
+
+Authentication itself (registration, login, password hashing, sessions,
+recovery, verification) is delegated to **Ory Kratos**, which runs as a
+separate container in the same `docker compose`. The API trusts Kratos
+session tokens validated via `/sessions/whoami`.
 
 It does **not** handle encryption — that happens client-side in the CLI.
 The API never sees plaintext file content. Ever.
@@ -47,6 +52,7 @@ The API never sees plaintext file content. Ever.
 | Language | Go 1.26+ |
 | HTTP framework | Go stdlib `net/http` (no third-party router) |
 | Validation | `go-playground/validator/v10` (struct tags) |
+| Identity / auth | Ory Kratos (self-hosted, separate container) |
 | Database | Postgres |
 | Cache / rate limiting | Redis |
 | Blob storage | Pluggable — R2 (default), S3, GCS |
@@ -64,7 +70,7 @@ invosit-api/
 │   └── server/
 │       └── main.go          # startup, config loading, route registration
 ├── internal/
-│   ├── auth/                # register, login, JWT, refresh token rotation
+│   ├── kratos/              # thin Kratos client (whoami)
 │   ├── workspace/           # workspace + member management
 │   ├── files/               # file metadata, versions, manifest
 │   ├── access/              # DEK wrapping, permission checks, grants
@@ -77,13 +83,16 @@ invosit-api/
 │   ├── httpx/               # JSON bind/respond helpers, request ctx accessors
 │   ├── ids/                 # prefixed random ID generator
 │   ├── handler/             # HTTP handlers, one file per resource group
-│   │   ├── auth.go
+│   │   ├── kratos_hook.go   # after-registration webhook from Kratos
+│   │   ├── me.go            # /auth/me
 │   │   ├── workspace.go
 │   │   ├── members.go
 │   │   ├── files.go
 │   │   ├── access.go
 │   │   └── audit.go
 │   └── db/                  # Postgres connection, query helpers
+├── kratos/                  # Kratos config (kratos.yml, identity schema, hooks)
+├── db/init/                 # Postgres init scripts (CREATE DATABASE kratos)
 ├── migrations/              # numbered SQL files (001_init.sql, etc.)
 ├── docs/
 │   └── openapi.yaml         # OpenAPI 3.0 spec — lives here, not in frontend
@@ -111,19 +120,19 @@ land on the mux — there is no Gin-style "router group", and we don't need one.
 ```go
 mux := http.NewServeMux()
 
-// Public — no auth
-mux.HandleFunc("POST /api/v1/auth/register", h.auth.Register)
-mux.HandleFunc("POST /api/v1/auth/login",    h.auth.Login)
-mux.HandleFunc("POST /api/v1/auth/refresh",  h.auth.Refresh)
+// Public — no auth (registration/login/recovery served by Kratos itself).
+mux.HandleFunc("GET /api/v1/health", h.Health)
 
-// Authenticated — wrap individual handlers with the JWT middleware
-authed := middleware.JWT(jwtSecret)
-mux.Handle("POST /api/v1/auth/logout",  authed(http.HandlerFunc(h.auth.Logout)))
-mux.Handle("GET  /api/v1/auth/me",      authed(http.HandlerFunc(h.auth.Me)))
-mux.Handle("GET  /api/v1/workspaces",   authed(http.HandlerFunc(h.workspace.List)))
-mux.Handle("POST /api/v1/workspaces",   authed(http.HandlerFunc(h.workspace.Create)))
+// Internal — gated by shared-secret header inside the handler.
+mux.HandleFunc("POST /internal/hooks/kratos/after-registration", h.AfterRegistration)
 
-// Workspace-scoped — JWT + workspace membership
+// Authenticated — wrap individual handlers with Kratos session middleware
+authed := middleware.RequireKratosSession(kc, db)
+mux.Handle("GET  /api/v1/auth/me",    authed(http.HandlerFunc(h.Me)))
+mux.Handle("GET  /api/v1/workspaces", authed(http.HandlerFunc(h.workspace.List)))
+mux.Handle("POST /api/v1/workspaces", authed(http.HandlerFunc(h.workspace.Create)))
+
+// Workspace-scoped — Kratos session + workspace membership
 wsmw := middleware.Compose(authed, middleware.WorkspaceMember(db))
 mux.Handle("GET    /api/v1/workspaces/{workspaceId}",         wsmw(http.HandlerFunc(h.workspace.Get)))
 mux.Handle("DELETE /api/v1/workspaces/{workspaceId}",         wsmw(http.HandlerFunc(h.workspace.Delete)))
@@ -151,9 +160,11 @@ Handlers receive dependencies via a struct — no global state:
 
 ```go
 type Handler struct {
-    db      *sql.DB
-    storage storage.Storage
-    redis   *redis.Client
+    db         *sql.DB
+    kratos     *kratos.Client
+    storage    storage.Storage
+    redis      *redis.Client
+    webhookKey string
 }
 ```
 
@@ -171,12 +182,19 @@ package-level variables.
 
 ## Database schema
 
+The API uses one Postgres database (`invosit`) for application data.
+Identities, sessions, and password hashes live in a separate `kratos`
+Postgres database managed entirely by Ory Kratos. The two are linked
+by `users.kratos_identity_id`.
+
 ```sql
 workspaces
   id, name, created_by, created_at
 
 users
-  id, email, password_hash, public_key, created_at
+  id, email, kratos_identity_id, public_key, created_at
+  -- kratos_identity_id (UUID, UNIQUE) maps to the Kratos identity
+  -- created on registration via the Kratos after-registration webhook
 
 workspace_members
   workspace_id, user_id, role, joined_at
@@ -206,11 +224,6 @@ access_grants
 audit_logs
   id, user_id, workspace_id, action, file_id, ip, timestamp
   action: push | pull | login | logout | grant | revoke | rollback | delete
-
-refresh_tokens
-  id, user_id, token_hash, expires_at, used_at, created_at
-  -- token hashed with SHA-256 before storage, never stored plaintext
-  -- reuse detection: if used_at is set, invalidate ALL user tokens immediately
 ```
 
 ---
@@ -219,11 +232,13 @@ refresh_tokens
 
 Base path: `/api/v1`
 
+Registration, login, and logout are served by Ory Kratos directly on
+`:4433` (native JSON API; CLI hits Kratos straight). Password recovery
+and email verification are disabled for MVP — re-enable in `kratos.yml`
+once a courier and UI exist. The API only exposes `/auth/me` plus an
+internal webhook.
+
 ```
-POST   /auth/register
-POST   /auth/login
-POST   /auth/logout
-POST   /auth/refresh
 GET    /auth/me
 
 GET    /workspaces
@@ -270,22 +285,34 @@ compromised, files remain encrypted and unreadable.
 
 ### Authentication
 
-- Passwords hashed with **bcrypt**, cost factor 12 minimum
-- JWT access tokens: **HS256**, 1 hour expiry, signed with `JWT_SECRET`
-- Refresh tokens: cryptographically random 32 bytes, **hashed with SHA-256**
-  before storage — raw token only exists in memory and is returned once
-- Refresh token rotation on every use — old token invalidated, new token issued
-- **Token reuse detection**: if a used refresh token is presented again,
-  treat as token theft — immediately invalidate ALL tokens for that user
-- JWT middleware extracts user ID from token and attaches it to the request
-  context via `httpx.WithUserID` — never trust user ID from request body
-  or query params
+- Identity, registration, login, logout, recovery, verification, and
+  password hashing (Argon2id) are all delegated to **Ory Kratos**
+- Kratos issues a `session_token` from its **API flow** (`POST
+  /self-service/login/api`); the CLI sends it as
+  `Authorization: Bearer <session_token>` on every request. The future
+  dashboard will use Kratos browser flow with cookies — both land at the
+  same `/sessions/whoami` validation. (Per Ory's docs: "Native applications
+  must use the API flows which don't set any cookies.")
+- `RequireKratosSession` middleware reads the `Authorization: Bearer ...`
+  header (or the Kratos session cookie), forwards it to `/sessions/whoami`,
+  looks up the local `users` row by `kratos_identity_id`, and attaches the
+  local user ID to the request context via `httpx.WithUserID` — never
+  trust user ID from request body or query params
+- The `/internal/hooks/kratos/after-registration` endpoint is gated by a
+  shared-secret header (`X-Kratos-Webhook-Secret`, constant-time compared)
+  and creates the local `users` row when Kratos creates an identity
+- When OIDC / passkey is added later, the CLI will use API flow with
+  `return_session_token_exchange_code=true` and a loopback redirect for the
+  browser detour only those methods need. The API server is unaffected —
+  it just keeps validating Bearer tokens
+- No Redis caching of session validity — Kratos is the single source of
+  truth (revisit if whoami latency becomes a bottleneck)
 
 ### Authorization — three layers
 
 Every file access request must pass all three:
 
-1. **JWT middleware** — is the user authenticated?
+1. **Kratos session middleware** (`RequireKratosSession`) — is the user authenticated?
 2. **Workspace membership middleware** — does the user belong to this workspace?
 3. **Wrapped DEK check** — does a `wrapped_deks` row exist for this user + file?
    No row = 403 regardless of role or workspace membership.
@@ -295,12 +322,15 @@ with no wrapped DEK cannot decrypt the file even if they bypass the API.
 
 ### Rate limiting
 
-Redis-backed, per IP:
+Redis-backed, per IP, applied to API routes:
 
-- Auth endpoints (`/auth/login`, `/auth/register`): **10 req/min** — brute force
 - File push: **60 req/min**
 - All other endpoints: **300 req/min**
 - Return `429` with `Retry-After` header always
+
+Kratos has its own brute-force protection on `/self-service/login` and
+`/self-service/registration` (configured in `kratos/kratos.yml`). Tune
+that side independently rather than re-implementing it on the API.
 
 ### Input validation
 
@@ -309,15 +339,14 @@ validate via `httpx.Bind`, which uses `json.DisallowUnknownFields` and
 returns an error on either malformed JSON or failed validation:
 
 ```go
-type LoginRequest struct {
-    Email    string `json:"email"    validate:"required,email,max=255"`
-    Password string `json:"password" validate:"required,min=8,max=128"`
+type CreateWorkspaceRequest struct {
+    Name string `json:"name" validate:"required,min=1,max=64"`
 }
 
-func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
-    var req LoginRequest
+func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
+    var req CreateWorkspaceRequest
     if err := httpx.Bind(r, &req); err != nil {
-        httpx.RespondError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid email or password")
+        httpx.RespondError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid workspace name")
         return
     }
     // ...
@@ -357,9 +386,9 @@ X-Request-ID: <uuid>           ← for log correlation, safe to expose
 ### What must never be logged
 
 - Request bodies (may contain wrapped DEKs)
-- JWT tokens or refresh tokens
+- Kratos session tokens / cookies
+- `Authorization` or `Cookie` headers
 - `encrypted_dek` column values
-- Passwords or password hashes
 - Storage credentials or signed URLs
 
 Safe to log: method, path, status code, duration, user ID (not email),
@@ -405,7 +434,7 @@ Global (wraps the entire mux):
 5. **BodyLimit** — `http.MaxBytesReader` at 10MB
 
 Per-route (wraps specific handlers):
-6. **JWT** — validate Bearer token, attach `userID` to request context (auth routes only)
+6. **RequireKratosSession** — validate the Bearer token / Kratos cookie via `/sessions/whoami`, look up the local user, attach `userID` to request context
 7. **WorkspaceMember** — verify membership for `{workspaceId}` (workspace routes only)
 
 ---
@@ -442,10 +471,18 @@ R2 and S3 share one implementation — R2 is S3-compatible, different endpoint o
 # Server
 PORT=8080
 ENV=production                  # production | development
-JWT_SECRET=                     # minimum 32 random bytes
-                                # generate: openssl rand -hex 32
 
-# Postgres
+# Ory Kratos — set all three secrets per Ory's production guide
+# (the v1.3 config schema only accepts default/cookie/cipher under
+# `secrets:`, despite older docs mentioning a `pagination` key):
+# https://www.ory.com/docs/kratos/guides/production
+KRATOS_PUBLIC_URL=http://kratos:4433
+KRATOS_WEBHOOK_SECRET=          # generate: openssl rand -hex 32
+KRATOS_DEFAULT_SECRET=          # generate: openssl rand -hex 32
+KRATOS_COOKIE_SECRET=           # generate: openssl rand -hex 32
+KRATOS_CIPHER_SECRET=           # exactly 32 chars (e.g. openssl rand -hex 16)
+
+# Postgres (one container hosts two databases: invosit + kratos)
 DATABASE_URL=postgres://invosit:secret@postgres:5432/invosit
 
 # Redis
