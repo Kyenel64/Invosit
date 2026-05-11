@@ -1,0 +1,2 @@
+- [GitHub is primary; Linear is personal mirror](feedback_github_primary.md) — file issues in GitHub by default; only embed INV-NN in branch/title if user names a Linear issue
+- [Linear workspace + team for cross-linking](reference_linear.md) — workspace `invosit`, team **INV**; `inv-NN-slug` branch name auto-links GH PR to Linear
