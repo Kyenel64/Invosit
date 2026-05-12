@@ -197,8 +197,9 @@ users
   -- created on registration via the Kratos after-registration webhook
 
 workspace_members
-  workspace_id, user_id, role, joined_at
-  role: admin | developer | viewer
+  workspace_id, user_id, role, joined_at, expires_at
+  role: admin | member | viewer | no_access
+  expires_at: NULL = permanent membership; otherwise membership ends at that time
 
 environments
   id, workspace_id, name, created_at
@@ -224,6 +225,7 @@ access_grants
 audit_logs
   id, user_id, workspace_id, action, file_id, ip, timestamp
   action: push | pull | login | logout | grant | revoke | rollback | delete
+  -- user_id, workspace_id, file_id are nullable (login/logout has no workspace)
 ```
 
 ---
