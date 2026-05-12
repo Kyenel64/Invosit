@@ -3,6 +3,7 @@ package middleware
 import (
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/kyenel64/invosit-api/internal/httpx"
@@ -30,8 +31,9 @@ func Logger(next http.Handler) http.Handler {
 			userField = " user=" + uid
 		}
 
-		log.Printf("req=%s method=%s path=%s status=%d dur=%s%s",
-			requestID, r.Method, r.URL.Path, rec.statusOrDefault(), time.Since(start), userField)
+		// Quote the request path — it's attacker-controlled and could otherwise inject newlines into logs.
+		log.Printf("req=%s method=%s path=%s status=%d dur=%s%s", //nolint:gosec // strconv.Quote escapes control chars
+			requestID, r.Method, strconv.Quote(r.URL.Path), rec.statusOrDefault(), time.Since(start), userField)
 	})
 }
 

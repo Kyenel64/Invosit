@@ -15,12 +15,16 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 		log.Printf("httpx: marshal failed: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"something went wrong","code":"INTERNAL"}`))
+		if _, werr := w.Write([]byte(`{"error":"something went wrong","code":"INTERNAL"}`)); werr != nil {
+			log.Printf("httpx: write fallback failed: %v", werr)
+		}
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	w.Write(body)
+	if _, werr := w.Write(body); werr != nil {
+		log.Printf("httpx: write failed: %v", werr)
+	}
 }
 
 // RespondError writes a uniform JSON error.

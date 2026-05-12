@@ -1,9 +1,12 @@
+version: "2"
+
 run:
   timeout: 5m
   tests: true
+  go: '1.25'  # golangci-lint v2.12.2 was built with Go 1.25; analyze code at that level
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck       # unchecked errors
     - gosec          # security issues (critical for invosit-api)
@@ -11,27 +14,28 @@ linters:
     - ineffassign    # ineffective assignments
     - staticcheck    # broad static analysis
     - unused         # unused code
-    - gofmt          # formatting
-    - goimports      # import ordering
     - misspell       # typos
     - bodyclose      # http.Response.Body closed
     - sqlclosecheck  # sql.Rows / sql.Stmt closed
     - rowserrcheck   # sql.Rows.Err() checked
     - noctx          # http requests without context
     - contextcheck   # context propagation
+  settings:
+    gosec:
+      excludes:
+        - G104  # duplicate of errcheck
+      severity: low
+      confidence: low
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - noctx
+          - bodyclose
 
-linters-settings:
-  gosec:
-    excludes:
-      - G104  # duplicate of errcheck
-    severity: low
-    confidence: low
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck
-  max-issues-per-linter: 0
-  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
