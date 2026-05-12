@@ -77,7 +77,7 @@ GitHub is the default issue tracker. Use `gh issue create` for new work. Don't a
 
 ### Defaults
 
-- **Draft**: no — create ready-for-review unless the user says otherwise.
+- **Draft**: yes — create as draft unless the user says otherwise. Pass `--draft` to `gh pr create`.
 - **Labels / reviewers / assignees**: none by default. Let CODEOWNERS and repo automation assign.
 - **No Claude attribution**: do NOT add `Co-Authored-By: Claude …`, `🤖 Generated with Claude Code`, or any similar trailer/footer to commits or the PR body.
 
@@ -121,7 +121,7 @@ Do **not** pause for: choosing a branch name, choosing a commit message, decidin
 7. **Present a brief checkpoint** before creating the PR: title, base ← head, linked issue (existing `#N` or "will create: <drafted title>"), and one-line body summary. Wait for a single "go" (or inline corrections) — this is the only human gate. Do not re-confirm each field individually.
 8. **Create the PR** on confirmation using a heredoc for the body:
    ```
-   gh pr create --base <base> --title "<title>" --body "$(cat <<'EOF'
+   gh pr create --draft --base <base> --title "<title>" --body "$(cat <<'EOF'
    <body>
    EOF
    )"
