@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	hookSecret      = "shhh-very-secret"
-	hookIdentityID  = "00000000-0000-0000-0000-000000000001"
-	hookEmail       = "alice@example.com"
-	hookCreatedAt   = "2026-05-07T12:00:00Z"
-	validHookBody   = `{"identity_id":"` + hookIdentityID + `","email":"` + hookEmail + `","created_at":"` + hookCreatedAt + `"}`
+	hookSecret     = "shhh-very-secret"
+	hookIdentityID = "00000000-0000-0000-0000-000000000001"
+	hookEmail      = "alice@example.com"
+	hookCreatedAt  = "2026-05-07T12:00:00Z"
+	validHookBody  = `{"identity_id":"` + hookIdentityID + `","email":"` + hookEmail + `","created_at":"` + hookCreatedAt + `"}`
 )
 
 func newHookHandler(t *testing.T) (*Handler, sqlmock.Sqlmock, func()) {
