@@ -1,0 +1,37 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck       # unchecked errors
+    - gosec          # security issues (critical for invosit-api)
+    - govet          # suspicious constructs
+    - ineffassign    # ineffective assignments
+    - staticcheck    # broad static analysis
+    - unused         # unused code
+    - gofmt          # formatting
+    - goimports      # import ordering
+    - misspell       # typos
+    - bodyclose      # http.Response.Body closed
+    - sqlclosecheck  # sql.Rows / sql.Stmt closed
+    - rowserrcheck   # sql.Rows.Err() checked
+    - noctx          # http requests without context
+    - contextcheck   # context propagation
+
+linters-settings:
+  gosec:
+    excludes:
+      - G104  # duplicate of errcheck
+    severity: low
+    confidence: low
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+  max-issues-per-linter: 0
+  max-same-issues: 0
