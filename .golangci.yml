@@ -32,6 +32,8 @@ linters:
         linters:
           - gosec
           - errcheck
+          - noctx
+          - bodyclose
 
 formatters:
   enable:

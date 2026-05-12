@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -9,13 +10,13 @@ import (
 )
 
 // Creates and verifies connection to postgres
-func Open(databaseURL string) (*sql.DB, error) {
+func Open(ctx context.Context, databaseURL string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("opening db: %w", err)
 	}
 
-	if err := db.Ping(); err != nil {
+	if err := db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("pinging db: %w", err)
 	}
 
