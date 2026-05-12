@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -15,13 +16,17 @@ const migrationLockKey = 4242
 // Applies any *.sql files in dir that haven't been recorded in
 // schema_migrations yet, in lexical order.
 // Filename without the .sql extension is the version string.
-func Migrate(database *sql.DB, dir string) error {
-	if _, err := database.Exec("SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
+func Migrate(ctx context.Context, database *sql.DB, dir string) error {
+	if _, err := database.ExecContext(ctx, "SELECT pg_advisory_lock($1)", migrationLockKey); err != nil {
 		return fmt.Errorf("acquiring migration lock: %w", err)
 	}
-	defer database.Exec("SELECT pg_advisory_unlock($1)", migrationLockKey)
+	defer func() {
+		if _, err := database.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", migrationLockKey); err != nil {
+			log.Printf("releasing migration lock: %v", err)
+		}
+	}()
 
-	if _, err := database.Exec(`
+	if _, err := database.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version    TEXT PRIMARY KEY,
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -44,20 +49,10 @@ func Migrate(database *sql.DB, dir string) error {
 	}
 	sort.Strings(files)
 
-	applied := map[string]bool{}
-	rows, err := database.Query("SELECT version FROM schema_migrations")
+	applied, err := loadApplied(ctx, database)
 	if err != nil {
-		return fmt.Errorf("loading applied migrations: %w", err)
+		return err
 	}
-	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
-			rows.Close()
-			return err
-		}
-		applied[v] = true
-	}
-	rows.Close()
 
 	for _, name := range files {
 		version := strings.TrimSuffix(name, ".sql")
@@ -65,21 +60,23 @@ func Migrate(database *sql.DB, dir string) error {
 			continue
 		}
 
-		sqlBytes, err := os.ReadFile(filepath.Join(dir, name))
+		// Migration filenames come from a trusted, operator-controlled directory
+		// and are filtered to *.sql above — not user input.
+		sqlBytes, err := os.ReadFile(filepath.Join(dir, name)) // #nosec G304
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", name, err)
 		}
 
-		tx, err := database.Begin()
+		tx, err := database.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(string(sqlBytes)); err != nil {
-			tx.Rollback()
+		if _, err := tx.ExecContext(ctx, string(sqlBytes)); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("applying %s: %w", name, err)
 		}
-		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {
-			tx.Rollback()
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("recording %s: %w", name, err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -89,4 +86,25 @@ func Migrate(database *sql.DB, dir string) error {
 	}
 
 	return nil
+}
+
+func loadApplied(ctx context.Context, database *sql.DB) (map[string]bool, error) {
+	rows, err := database.QueryContext(ctx, "SELECT version FROM schema_migrations")
+	if err != nil {
+		return nil, fmt.Errorf("loading applied migrations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	applied := map[string]bool{}
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		applied[v] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating applied migrations: %w", err)
+	}
+	return applied, nil
 }

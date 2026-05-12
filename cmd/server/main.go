@@ -60,13 +60,17 @@ func run(
 		return errors.New("KRATOS_WEBHOOK_SECRET is required")
 	}
 
-	database, err := db.Open(databaseURL)
+	database, err := db.Open(ctx, databaseURL)
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			_, _ = fmt.Fprintf(stderr, "closing db: %v\n", err)
+		}
+	}()
 
-	if err := db.Migrate(database, migrationsDir); err != nil {
+	if err := db.Migrate(ctx, database, migrationsDir); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
@@ -83,7 +87,7 @@ func run(
 
 	serverErr := make(chan error, 1)
 	go func() {
-		fmt.Fprintf(stdout, "starting server on: %s\n", port)
+		_, _ = fmt.Fprintf(stdout, "starting server on: %s\n", port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
@@ -97,10 +101,11 @@ func run(
 		}
 		return nil
 	case <-ctx.Done():
-		fmt.Fprintln(stdout, "shutdown signal received")
+		_, _ = fmt.Fprintln(stdout, "shutdown signal received")
+		// Parent ctx is already cancelled — derive shutdown deadline from a fresh root.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
+		if err := srv.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck // fresh ctx is intentional during shutdown
 			return fmt.Errorf("graceful shutdown: %w", err)
 		}
 		return nil

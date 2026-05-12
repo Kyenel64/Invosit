@@ -41,6 +41,9 @@ func (c *Client) Whoami(ctx context.Context, sessionToken, cookie string) (*Sess
 	}
 
 	sess, resp, err := req.Execute()
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err != nil {
 		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
 			return nil, ErrUnauthenticated
