@@ -1,27 +1,49 @@
-# invosit-api
+# Invosit
 
-> API server for [Invosit](https://github.com/yourorg/invosit) — git sidecar for files that shouldn't be in git.
+> Encrypted file sync for files that shouldn't be in git.
 
-Built with Go (stdlib `net/http`), Postgres, Redis, [Ory Kratos](https://www.ory.sh/kratos/),
-and pluggable blob storage (R2 / S3 today; GCS planned). Security is the core design
-principle — files are encrypted client-side before they ever reach this
-server, and identity / sessions are delegated entirely to Kratos.
+Invosit lets teams push and pull files securely alongside a repo without
+committing them. A small manifest (`.invosit.yaml`) is checked into git
+tracking what files belong to the repo; the actual files live in encrypted
+blob storage and are pulled down via the CLI.
+
+**Security is the core design principle.** Files are encrypted client-side
+in the CLI before they ever reach the API; the server never sees plaintext.
+Identity and sessions are delegated entirely to [Ory Kratos](https://www.ory.sh/kratos/).
 
 ---
 
-## Requirements
+## Monorepo contents
+
+This repo holds both halves of Invosit:
+
+| Path | Language | Status | Description |
+|---|---|---|---|
+| `cmd/server/`, `internal/` | Go 1.26+ | shipping | API server — workspaces, members, file metadata, signed storage URLs, audit log |
+| `cli/` | Go (planned) | not yet built | The CLI — handles AES-256-GCM encryption, talks to API + Kratos, manages `.invosit.yaml` |
+| `kratos/` | YAML | shipping | Ory Kratos config (identity schema, hooks, MVP-tuned Argon2) |
+| `migrations/` | SQL | shipping | Postgres migrations for the API DB |
+| `docs/openapi.yaml` | OpenAPI 3.0 | shipping | API contract — single source of truth shared by API + CLI |
+
+The API currently sits at the repo root; CLI lands under `cli/` when work
+on it begins. If/when the API moves under `api/` to symmetrise the layout,
+the structure section below will be updated.
+
+---
+
+## API server
+
+### Requirements
 
 - Go 1.26+
 - Docker + Docker Compose
-- A blob storage bucket (Cloudflare R2 or AWS S3; GCS support planned)
+- A blob storage bucket (Cloudflare R2 or AWS S3; GCS planned)
 
----
-
-## Getting started
+### Getting started
 
 ```bash
-git clone https://github.com/yourorg/invosit-api
-cd invosit-api
+git clone https://github.com/kyenel64/Invosit
+cd Invosit
 cp .env.example .env        # fill in storage credentials and Kratos secrets
 docker compose up -d        # start Postgres, Redis, Kratos
 go run ./cmd/server         # start API on :8080
@@ -31,23 +53,20 @@ Compose brings up:
 
 | Service | Host port | Purpose |
 |---|---|---|
-| `api` | `8080` | This Go server |
-| `kratos` | `4433` | Kratos public API (also internal admin on `4434`, not host-exposed). Migrations run automatically on every boot — they're idempotent. |
+| `api` | `8080` | The Go API server |
+| `kratos` | `4433` | Kratos public API (admin on `4434`, not host-exposed). Migrations idempotent. |
 | `postgres` | `5432` | Hosts both `invosit` and `kratos` databases |
 | `redis` | `6379` | Cache / rate limiting |
 
-The MVP runs Kratos as a JSON-API only — no self-service UI container, no
-SMTP/courier. The CLI talks to Kratos directly via the native API flow
-(`/self-service/registration/api`, `/self-service/login/api`). Email
-verification and password recovery are disabled in `kratos.yml` until
-there's a courier and a UI to host the flows.
+MVP runs Kratos as JSON-API only — no self-service UI, no SMTP/courier.
+The CLI talks to Kratos directly via the native API flow. Email verification
+and password recovery are disabled in `kratos.yml` until there's a courier
+and a UI to host the flows.
 
 Migrations run automatically on startup. API docs available at
 `http://localhost:8080/docs`.
 
----
-
-## Configuration
+### Configuration
 
 All config via environment variables. Copy `.env.example` to `.env`:
 
@@ -84,7 +103,7 @@ STORAGE_REGION=auto
 CORS_ALLOWED_ORIGINS=http://localhost:3000
 ```
 
-### Storage providers
+#### Storage providers
 
 **Cloudflare R2** (recommended — zero egress fees):
 ```bash
@@ -108,16 +127,14 @@ STORAGE_SECRET_KEY=xxx
 **Google Cloud Storage:** planned, not yet implemented. Setting
 `STORAGE_PROVIDER=gcs` today returns `ErrUnknownProvider` at startup.
 
----
-
-## API
+### API surface
 
 Base URL: `/api/v1`
 
 Registration, login, and logout are served by Ory Kratos directly on
-`:4433` (native JSON API; the CLI hits Kratos straight, no UI container).
-Password recovery and email verification are disabled in MVP. The API only
-exposes `/auth/me` plus an internal Kratos webhook.
+`:4433` (native JSON API; the CLI hits Kratos straight). Password recovery
+and email verification are disabled in MVP. The API only exposes `/auth/me`
+plus an internal Kratos webhook.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -144,20 +161,35 @@ Full schemas: [`docs/openapi.yaml`](docs/openapi.yaml)
 
 ---
 
+## CLI
+
+Not yet implemented. The CLI is the client that:
+
+- Generates per-file Data Encryption Keys (DEKs), encrypts files locally with AES-256-GCM, and wraps the DEK for each authorised user's public key before upload.
+- Authenticates against Kratos directly using the native API flow (`POST /self-service/login/api`) and sends the returned `session_token` as `Authorization: Bearer …` on every API request.
+- Maintains `.invosit.yaml` in the working directory — the manifest committed to git that tracks which files belong to the workspace.
+- Uploads/downloads encrypted blobs directly to storage via short-lived signed URLs from the API; bytes never pass through the API server.
+
+When development starts it will live under `cli/` in this repo and share the
+`docs/openapi.yaml` contract with the API.
+
+---
+
 ## Security model
 
 ### The server never sees plaintext
 
-Files are encrypted client-side by the CLI before upload. This server only
-ever handles encrypted blobs and opaque wrapped DEKs. Even a full server
-compromise does not expose file contents.
+Files are encrypted client-side by the CLI before upload. The API only ever
+handles encrypted blobs and opaque wrapped DEKs. A full server compromise
+does not expose file contents.
 
 ### Access control is cryptographic
 
 Every file has a `wrapped_dek` row per authorised user — a DEK encrypted
 with that user's public key. No row means no access, enforced at the crypto
 layer, not just the permission check layer. Revoking a user deletes their
-wrapped DEK rows. Their next pull returns 403 instantly. No re-encryption needed.
+wrapped DEK rows; their next pull returns 403 instantly. No re-encryption
+needed.
 
 ### Authentication
 
@@ -167,18 +199,18 @@ Kratos**. The API validates incoming requests by calling Kratos
 `/sessions/whoami` — there is no JWT or refresh token rotation in this
 codebase. When Kratos creates a new identity, it fires an after-registration
 webhook that creates the corresponding `users` row locally (gated by a
-shared-secret header).
+shared-secret header, constant-time compared).
 
 ### Rate limiting
 
 - API endpoints: 300 requests/minute per IP
-- Login / registration brute force is rate-limited by Kratos itself
-  (configured in `kratos/kratos.yml`)
+- File push: 60 requests/minute per IP
+- Login / registration brute-force is rate-limited by Kratos itself (configured in `kratos/kratos.yml`)
 
 ### Signed storage URLs
 
 Download URLs expire in 15 minutes and are only issued after auth and
-wrapped DEK verification pass. The server never proxies file content.
+wrapped-DEK verification pass. The server never proxies file content.
 
 ### Security headers
 
@@ -196,23 +228,29 @@ Referrer-Policy: no-referrer
 ## Project structure
 
 ```
-invosit-api/
-├── cmd/server/          # entry point, route registration
+Invosit/                       # this monorepo (GitHub: kyenel64/Invosit)
+├── cmd/server/                # API entry point, route registration
 ├── internal/
-│   ├── kratos/          # thin Kratos client (whoami)
-│   ├── workspace/       # workspaces, members
-│   ├── files/           # file metadata, versions
-│   ├── access/          # DEK wrapping, grants
-│   ├── audit/           # audit log
-│   ├── storage/         # storage interface + R2/S3 implementation (GCS planned)
-│   ├── middleware/      # Kratos session, rate limiting, security headers, logging
-│   ├── httpx/           # JSON bind/respond helpers, request ctx
-│   └── handler/         # net/http handlers, one file per resource group
-├── kratos/              # Kratos config (kratos.yml, identity schema, hooks)
-├── db/init/             # Postgres init scripts (CREATE DATABASE kratos)
-├── migrations/          # SQL migration files
-└── docs/
-    └── openapi.yaml
+│   ├── kratos/                # thin Kratos client (whoami)
+│   ├── workspace/             # workspaces, members
+│   ├── files/                 # file metadata, versions
+│   ├── access/                # DEK wrapping, grants
+│   ├── audit/                 # audit log
+│   ├── storage/               # storage interface + R2/S3 (GCS planned)
+│   ├── middleware/            # Kratos session, rate limiting, security headers, logging
+│   ├── httpx/                 # JSON bind/respond helpers, request ctx
+│   ├── ids/                   # prefixed ID generator
+│   ├── db/                    # Postgres connection helpers
+│   └── handler/               # net/http handlers, one file per resource group
+├── cli/                       # (planned) Go CLI — handles encryption
+├── kratos/                    # Kratos config (kratos.yml, identity schema, hooks)
+├── db/init/                   # Postgres init scripts (CREATE DATABASE kratos)
+├── migrations/                # SQL migration files
+├── docs/
+│   └── openapi.yaml           # shared API contract
+├── docker-compose.yml         # spins up Postgres, Redis, Kratos for dev
+├── CLAUDE.md                  # full project context for Claude
+└── AGENTS.md                  # PR-review context for Codex
 ```
 
 ---
@@ -240,14 +278,13 @@ docker compose run --rm kratos hashers argon2 calibrate 1s
 ```
 
 Aim for ~0.5–1s per hash. Too fast weakens the hash; too slow opens DoS on
-login. Re-run this whenever the VPS's hardware changes.
+login. Re-run whenever the VPS's hardware changes.
 
 ---
 
 ## Related repos
 
-- [`invosit-cli`](https://github.com/yourorg/invosit-cli) — CLI tool (handles encryption)
-- [`invosit-web`](https://github.com/yourorg/invosit-web) — web dashboard
+- [`invosit-web`](https://github.com/kyenel64/invosit-web) — web dashboard (separate repo)
 
 ---
 

@@ -1,13 +1,13 @@
-# CLAUDE.md — invosit-api
+# CLAUDE.md — Invosit
 
-This file gives Claude context about the invosit-api repository so it can
-assist effectively without needing to be re-explained from scratch each session.
+This file gives Claude context about the Invosit repository so it can assist
+effectively without needing to be re-explained from scratch each session.
 
 ---
 
 ## What is Invosit?
 
-Invosit is a git sidecar tool for files that shouldn't be in git.
+Invosit syncs encrypted files alongside a git repo — for files that shouldn't be committed.
 
 It lets teams push and pull encrypted files alongside a repo without committing
 them. A small manifest file (`.invosit.yaml`) is committed to git, tracking
@@ -17,7 +17,7 @@ and are pulled down by teammates via the CLI.
 Think of it as "Infisical but for arbitrary files" — the same auth model,
 workspace concept, and CLI pattern, but for files instead of env vars.
 
-**Tagline:** Git sidecar for files that shouldn't be in git.
+**Tagline:** Encrypted file sync for files that shouldn't be in git.
 
 **Security is the core value proposition.** Every design decision should be
 evaluated through a security lens first. When in doubt, choose the more
@@ -25,9 +25,25 @@ secure option even if it adds complexity.
 
 ---
 
-## This repo
+## Project layout
 
-`invosit-api` is the Go API server for Invosit. It handles:
+This repo (`github.com/kyenel64/Invosit`) holds both halves of the product:
+
+| Component | Location | Status |
+|---|---|---|
+| **API server** | `cmd/server/`, `internal/`, `migrations/`, `kratos/`, `db/init/` | shipping — most of this file describes it |
+| **CLI** | `cli/` | not yet built — see "The CLI" section below for intent |
+| **Documentation** | `docs/` | shared between API and CLI |
+
+The API currently lives at the repo root. The CLI will land under `cli/` when
+work starts on it. If we later restructure to symmetrise (`api/` + `cli/`),
+this section gets updated and the API directories move accordingly.
+
+---
+
+## The API server
+
+The Go API server handles:
 
 - Validating Kratos sessions and resolving local user records
 - Workspace and member management
@@ -43,9 +59,7 @@ session tokens validated via `/sessions/whoami`.
 It does **not** handle encryption — that happens client-side in the CLI.
 The API never sees plaintext file content. Ever.
 
----
-
-## Tech stack
+### Tech stack
 
 | Layer | Technology |
 |---|---|
@@ -55,17 +69,14 @@ The API never sees plaintext file content. Ever.
 | Identity / auth | Ory Kratos (self-hosted, separate container) |
 | Database | Postgres |
 | Cache / rate limiting | Redis |
-| Blob storage | Pluggable — R2 (default), S3, GCS |
+| Blob storage | Pluggable — R2 (default), S3, GCS (planned) |
 | Containerisation | Docker Compose |
 | Reverse proxy | Nginx Proxy Manager (external, already running on VPS) |
 
----
-
-## Repo structure
+### Directory structure (API)
 
 ```
-invosit-api/
-├── main.go
+Invosit/
 ├── cmd/
 │   └── server/
 │       └── main.go          # startup, config loading, route registration
@@ -94,19 +105,11 @@ invosit-api/
 ├── kratos/                  # Kratos config (kratos.yml, identity schema, hooks)
 ├── db/init/                 # Postgres init scripts (CREATE DATABASE kratos)
 ├── migrations/              # numbered SQL files (001_init.sql, etc.)
-├── docs/
-│   └── openapi.yaml         # OpenAPI 3.0 spec — lives here, not in frontend
-├── .env.example
-├── docker-compose.yml
-├── docker-compose.prod.yml
-├── Dockerfile
-├── CLAUDE.md
-└── README.md
+└── docs/
+    └── openapi.yaml         # OpenAPI 3.0 spec — lives here, not in frontend
 ```
 
----
-
-## Routing and middleware
+### Routing and middleware
 
 We use stdlib `net/http` only — `http.ServeMux` with the method+path pattern
 syntax added in Go 1.22. No third-party router. Path params come from
@@ -178,9 +181,7 @@ For per-request state (request ID, user ID), use `r.Context()` plus the
 typed accessors in `internal/httpx`. Never store request-scoped data in
 package-level variables.
 
----
-
-## Database schema
+### Database schema
 
 The API uses one Postgres database (`invosit`) for application data.
 Identities, sessions, and password hashes live in a separate `kratos`
@@ -228,9 +229,7 @@ audit_logs
   -- user_id, workspace_id, file_id are nullable (login/logout has no workspace)
 ```
 
----
-
-## API routes
+### API routes
 
 Base path: `/api/v1`
 
@@ -267,6 +266,30 @@ GET    /workspaces/:workspaceId/audit
 ```
 
 Full request/response schemas in `docs/openapi.yaml`.
+
+---
+
+## The CLI
+
+Not yet built. When it lands it will live in `cli/` in this repo.
+
+### Responsibilities (intended)
+
+- **Encryption boundary.** All AES-256-GCM encryption/decryption of file contents happens here, not in the API. Generates per-file DEKs and wraps each with the recipient's public key (sourced from `users.public_key` via the API).
+- **Manifest management.** Reads and writes `.invosit.yaml` in the working directory — the file committed to git that lists which files belong to the workspace, their paths, and current content hashes.
+- **Auth.** Authenticates against Kratos directly via the **API flow** (`POST /self-service/login/api`); stores the returned `session_token` locally and sends it as `Authorization: Bearer <token>` on every API request.
+- **Storage I/O.** Uploads/downloads encrypted blobs **directly** to the storage provider using short-lived signed URLs issued by the API. Bytes never pass through the API server.
+- **Local key material.** Generates and stores the user's keypair locally; the public key gets registered with the API on first run, the private key never leaves the machine.
+
+### Shared with the API
+
+- `docs/openapi.yaml` — single source of truth for request/response shapes. The CLI generates or hand-writes a client off this; the API serves it.
+- ID prefix conventions (`ws_`, `usr_`, `file_`, `ver_`, `grant_`, `log_`).
+- Error code stability — the API returns short stable codes (`NOT_FOUND`, `INVALID_REQUEST`, etc.) that the CLI maps to user-facing messages.
+
+When the CLI starts taking shape, the structure tree above gets an expanded
+`cli/` subtree, this section grows real entry points and commands, and
+"Running locally" splits into per-component subsections.
 
 ---
 
@@ -543,12 +566,14 @@ error server-side with request ID for tracing.
 
 ## Conventions
 
-- Stdlib `net/http` only — no third-party router or web framework
-- `http.ServeMux` 1.22+ patterns: `"POST /api/v1/auth/register"`, `"GET /workspaces/{id}"`
-- All middleware is `func(http.Handler) http.Handler`; compose with `middleware.Chain`
-- Decode + validate request bodies via `httpx.Bind` (rejects unknown JSON fields)
-- Read user ID / request ID from `r.Context()` via `httpx` accessors — never globals
-- No global state — all dependencies injected via handler struct
+These apply across the monorepo. API-specific conventions are noted as such.
+
+- **API:** stdlib `net/http` only — no third-party router or web framework
+- **API:** `http.ServeMux` 1.22+ patterns: `"POST /api/v1/auth/register"`, `"GET /workspaces/{id}"`
+- **API:** all middleware is `func(http.Handler) http.Handler`; compose with `middleware.Chain`
+- **API:** decode + validate request bodies via `httpx.Bind` (rejects unknown JSON fields)
+- **API:** read user ID / request ID from `r.Context()` via `httpx` accessors — never globals
+- No global state — all dependencies injected via handler struct (or equivalent on CLI side)
 - `database/sql` directly — no ORM, parameterised queries only
 - Migrations: numbered SQL files (`001_init.sql`, `002_add_environments.sql`)
 - Timestamps: UTC always
@@ -563,8 +588,10 @@ error server-side with request ID for tracing.
 
 ```bash
 cp .env.example .env
-docker compose up -d         # starts Postgres + Redis
+docker compose up -d         # starts Postgres + Redis + Kratos
 go run ./cmd/server          # starts API on :8080
 ```
 
 Migrations run automatically on startup.
+
+CLI build instructions will go here when `cli/` exists.
