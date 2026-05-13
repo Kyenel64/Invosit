@@ -41,7 +41,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		httpx.InternalError(w, r, err)
 		return
 	}
-	defer transaction.Rollback()
+	defer func() { _ = transaction.Rollback() }()
 
 	if _, err := transaction.ExecContext(r.Context(),
 		`INSERT INTO workspaces(id, name, created_by, created_at) VALUES($1, $2, $3, $4)`,
@@ -92,7 +92,7 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 		httpx.InternalError(w, r, err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	workspaces := []map[string]any{}
 	for rows.Next() {
