@@ -17,5 +17,6 @@ func New(prefix string) string {
 	return prefix + "_" + s
 }
 
-func User() string  { return New("usr") }
-func Token() string { return New("tok") }
+func User() string      { return New("usr") }
+func Token() string     { return New("tok") }
+func Workspace() string { return New("ws") }

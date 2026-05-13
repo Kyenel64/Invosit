@@ -15,7 +15,7 @@ import (
 // without logging — re-panic so the server's own machinery handles it.
 func Recovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
+		defer func() { //nolint:contextcheck // closure reads r.Context() for log correlation only; no propagation needed
 			rec := recover()
 			if rec == nil {
 				return
