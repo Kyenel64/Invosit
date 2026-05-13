@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -80,7 +82,7 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.QueryContext(r.Context(),
 		`SELECT w.id, w.name, w.created_by, w.created_at, m.role
 		FROM workspaces w
-		JOIN workspaces_members m ON m.workspace_id = w.id
+		JOIN workspace_members m ON m.workspace_id = w.id
 		WHERE m.user_id = $1
 		AND (m.expires_at IS NULL OR m.expires_at > NOW())
 		ORDER BY w.created_at DESC`,
@@ -116,4 +118,71 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"workspaces": workspaces})
+}
+
+func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
+	// Workspace middleware assigns these values to context
+	workspaceID := httpx.WorkspaceID(r.Context())
+	role := httpx.WorkspaceRole(r.Context())
+
+	var (
+		name      string
+		createdBy string
+		createdAt time.Time
+	)
+	err := h.db.QueryRowContext(r.Context(),
+		`SELECT name, created_by, created_at FROM workspaces WHERE id = $1`,
+		workspaceID,
+	).Scan(&name, &createdBy, &createdAt)
+	if err != nil {
+		// Membership was already confirmed by middleware; a missing row here
+		// means the workspace was deleted between the membership check and
+		// now. Surface as 403 to stay consistent with the no-leak rule.
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.RespondError(w, http.StatusForbidden, "FORBIDDEN", "access denied")
+			return
+		}
+		httpx.InternalError(w, r, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":         workspaceID,
+		"name":       name,
+		"created_by": createdBy,
+		"created_at": createdAt,
+		"role":       role,
+	})
+}
+
+// Admin role only. viewers/members get 403.
+func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	workspaceID := httpx.WorkspaceID(r.Context())
+	role := httpx.WorkspaceRole(r.Context())
+
+	if role != "admin" {
+		httpx.RespondError(w, http.StatusForbidden, "FORBIDDEN", "admin role required")
+		return
+	}
+
+	res, err := h.db.ExecContext(r.Context(),
+		`DELETE FROM workspaces WHERE id = $1`,
+		workspaceID,
+	)
+	if err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+	if affected == 0 {
+		// Concurrent delete — already gone. 403 keeps existence opaque.
+		httpx.RespondError(w, http.StatusForbidden, "FORBIDDEN", "access denied")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
