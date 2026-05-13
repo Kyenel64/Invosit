@@ -16,6 +16,7 @@ import (
 	"github.com/kyenel64/invosit-api/internal/handler"
 	"github.com/kyenel64/invosit-api/internal/kratos"
 	"github.com/kyenel64/invosit-api/internal/middleware"
+	"github.com/kyenel64/invosit-api/internal/storage"
 )
 
 func main() {
@@ -76,9 +77,22 @@ func run(
 
 	kc := kratos.NewClient(kratosURL)
 
+	storageCfg := storage.Config{
+		Provider:  getenv("STORAGE_PROVIDER"),
+		Bucket:    getenv("STORAGE_BUCKET"),
+		Endpoint:  getenv("STORAGE_ENDPOINT"),
+		AccessKey: getenv("STORAGE_ACCESS_KEY"),
+		SecretKey: getenv("STORAGE_SECRET_KEY"),
+		Region:    getenv("STORAGE_REGION"),
+	}
+	blobs, err := storage.New(storageCfg)
+	if err != nil {
+		return fmt.Errorf("storage: %w", err)
+	}
+
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           NewServer(database, kc, kratosWebhookSecret),
+		Handler:           NewServer(database, kc, blobs, kratosWebhookSecret),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -115,9 +129,9 @@ func run(
 // NewServer builds the application's http.Handler — mux, routes, and the
 // global middleware stack. Returned as a single http.Handler so callers
 // (and tests) only see one composed handler.
-func NewServer(database *sql.DB, kc *kratos.Client, webhookSecret string) http.Handler {
+func NewServer(database *sql.DB, kc *kratos.Client, blobs storage.Storage, webhookSecret string) http.Handler {
 	mux := http.NewServeMux()
-	h := handler.New(database, kc, webhookSecret)
+	h := handler.New(database, kc, blobs, webhookSecret)
 	handler.AddRoutes(mux, h)
 
 	// request -> Recovery -> Logger -> BodyLimit -> mux -> handler
