@@ -3,7 +3,7 @@
 > API server for [Invosit](https://github.com/yourorg/invosit) — git sidecar for files that shouldn't be in git.
 
 Built with Go (stdlib `net/http`), Postgres, Redis, [Ory Kratos](https://www.ory.sh/kratos/),
-and pluggable blob storage (R2 / S3 / GCS). Security is the core design
+and pluggable blob storage (R2 / S3 today; GCS planned). Security is the core design
 principle — files are encrypted client-side before they ever reach this
 server, and identity / sessions are delegated entirely to Kratos.
 
@@ -13,7 +13,7 @@ server, and identity / sessions are delegated entirely to Kratos.
 
 - Go 1.26+
 - Docker + Docker Compose
-- A blob storage bucket (Cloudflare R2, AWS S3, or GCS)
+- A blob storage bucket (Cloudflare R2 or AWS S3; GCS support planned)
 
 ---
 
@@ -105,12 +105,8 @@ STORAGE_ACCESS_KEY=xxx
 STORAGE_SECRET_KEY=xxx
 ```
 
-**Google Cloud Storage:**
-```bash
-STORAGE_PROVIDER=gcs
-STORAGE_BUCKET=invosit-blobs
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-```
+**Google Cloud Storage:** planned, not yet implemented. Setting
+`STORAGE_PROVIDER=gcs` today returns `ErrUnknownProvider` at startup.
 
 ---
 
@@ -208,7 +204,7 @@ invosit-api/
 │   ├── files/           # file metadata, versions
 │   ├── access/          # DEK wrapping, grants
 │   ├── audit/           # audit log
-│   ├── storage/         # storage interface + R2/S3/GCS implementations
+│   ├── storage/         # storage interface + R2/S3 implementation (GCS planned)
 │   ├── middleware/      # Kratos session, rate limiting, security headers, logging
 │   ├── httpx/           # JSON bind/respond helpers, request ctx
 │   └── handler/         # net/http handlers, one file per resource group

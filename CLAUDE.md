@@ -76,9 +76,9 @@ invosit-api/
 │   ├── access/              # DEK wrapping, permission checks, grants
 │   ├── audit/               # audit log writes and queries
 │   ├── storage/             # storage interface + provider implementations
-│   │   ├── storage.go       # interface definition only
-│   │   ├── s3.go            # AWS S3 + Cloudflare R2 (S3-compatible, diff endpoint)
-│   │   └── gcs.go           # Google Cloud Storage
+│   │   ├── storage.go       # Storage interface, Config, New factory, errors, expiry validator
+│   │   └── s3.go            # AWS S3 + Cloudflare R2 (S3-compatible, diff endpoint)
+│   │                        # gcs.go is planned; not yet implemented
 │   ├── middleware/          # net/http middleware (see middleware section)
 │   ├── httpx/               # JSON bind/respond helpers, request ctx accessors
 │   ├── ids/                 # prefixed random ID generator
@@ -448,22 +448,35 @@ directly outside of `internal/storage/`:
 
 ```go
 type Storage interface {
-    Put(ctx context.Context, key string, body io.Reader, size int64) error
-    Get(ctx context.Context, key string) (io.ReadCloser, error)
+    SignedPutURL(ctx context.Context, key string, expiry time.Duration) (string, error)
+    SignedGetURL(ctx context.Context, key string, expiry time.Duration) (string, error)
     Delete(ctx context.Context, key string) error
-    SignedURL(ctx context.Context, key string, expiry time.Duration) (string, error)
 }
 ```
 
+No `Put`/`Get` methods: the CLI uploads/downloads encrypted blobs directly
+against the provider via signed URLs, so API server bytes never touch the
+blob path. Adding server-side streaming methods would invite a handler to
+proxy bytes through the API, which breaks both the encryption boundary
+and R2's zero-egress economics. Add them only when a concrete handler
+needs them.
+
+`Delete` is idempotent: deleting a non-existent key is a no-op, not an error.
+
+The package exports `MaxSignedURLExpiry = 15 * time.Minute` and
+`ErrExpiryTooLong`; callers requesting a longer expiry get a hard error,
+not a silent clamp.
+
 Provider selected at startup via `STORAGE_PROVIDER`:
 
-| Value | Provider |
-|---|---|
-| `r2` | Cloudflare R2 (default, zero egress fees) |
-| `s3` | AWS S3 |
-| `gcs` | Google Cloud Storage |
+| Value | Provider | Status |
+|---|---|---|
+| `r2` | Cloudflare R2 (zero egress fees) | shipped — default when `STORAGE_PROVIDER` is empty |
+| `s3` | AWS S3 | shipped |
+| `gcs` | Google Cloud Storage | planned, not yet implemented (returns `ErrUnknownProvider` today) |
 
-R2 and S3 share one implementation — R2 is S3-compatible, different endpoint only.
+R2 and S3 share one implementation — R2 is S3-compatible, different endpoint
+(plus `region=auto` and path-style addressing).
 
 ---
 
@@ -491,7 +504,7 @@ DATABASE_URL=postgres://invosit:secret@postgres:5432/invosit
 REDIS_URL=redis://redis:6379
 
 # Storage
-STORAGE_PROVIDER=r2             # r2 | s3 | gcs
+STORAGE_PROVIDER=r2             # r2 | s3 (gcs planned, not yet implemented)
 STORAGE_BUCKET=invosit-blobs
 STORAGE_ENDPOINT=               # R2 or custom S3 endpoint, blank for AWS
 STORAGE_ACCESS_KEY=
