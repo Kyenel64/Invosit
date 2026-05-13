@@ -84,6 +84,7 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 		FROM workspaces w
 		JOIN workspace_members m ON m.workspace_id = w.id
 		WHERE m.user_id = $1
+		AND m.role <> 'no_access'
 		AND (m.expires_at IS NULL OR m.expires_at > NOW())
 		ORDER BY w.created_at DESC`,
 		uid,

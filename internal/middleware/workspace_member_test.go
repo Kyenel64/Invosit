@@ -78,9 +78,9 @@ func TestWorkspaceMember_MemberOK(t *testing.T) {
 	}
 }
 
-// Both "not a member" and "membership expired" surface as sql.ErrNoRows from
-// the query (expires_at is filtered in the WHERE clause), so they share a
-// single 403 path through the middleware.
+// "Not a member", "membership expired", and "role = no_access" all surface
+// as sql.ErrNoRows from the query (filtered in the WHERE clause), so they
+// share a single 403 path through the middleware.
 func TestWorkspaceMember_NotAMemberReturnsForbidden(t *testing.T) {
 	db, mock, _ := sqlmock.New()
 	defer db.Close()

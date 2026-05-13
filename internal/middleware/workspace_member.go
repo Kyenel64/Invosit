@@ -16,6 +16,7 @@ import (
 //   - empty {workspaceId} path value                            → 403
 //   - no matching workspace_members row (incl. nonexistent ws)  → 403
 //   - membership row exists but expires_at has passed           → 403
+//   - membership row exists but role is 'no_access'             → 403
 //
 // 403 (not 404) is intentional: revealing whether a workspace exists to a
 // non-member is itself an information leak.
@@ -40,6 +41,7 @@ func WorkspaceMember(db *sql.DB) Middleware {
 				   FROM workspace_members
 				  WHERE workspace_id = $1
 				    AND user_id = $2
+				    AND role <> 'no_access'
 				    AND (expires_at IS NULL OR expires_at > NOW())`,
 				workspaceID, uid,
 			).Scan(&role)
