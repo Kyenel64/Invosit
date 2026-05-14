@@ -2,7 +2,6 @@ package handler
 
 import (
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
@@ -109,13 +108,16 @@ func (h *Handler) PushFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tx.Commit(); err != nil {
+	// Presign before committing. If signing fails (storage outage, mis-config),
+	// the deferred Rollback discards the version so a subsequent pull doesn't
+	// point at a blob the client was never given a chance to upload.
+	uploadURL, err := h.blobs.SignedPutURL(r.Context(), blobKey, storage.MaxSignedURLExpiry)
+	if err != nil {
 		httpx.InternalError(w, r, err)
 		return
 	}
 
-	uploadURL, err := h.blobs.SignedPutURL(r.Context(), blobKey, storage.MaxSignedURLExpiry)
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		httpx.InternalError(w, r, err)
 		return
 	}
@@ -321,12 +323,18 @@ func validateFilePath(p string) error {
 	return nil
 }
 
+// validateSha256Hex requires exactly 64 lowercase hex chars. The lowercase
+// requirement is part of the wire contract: the same bytes must always hash
+// to the same blob key, so accepting mixed case would let two clients push
+// the same file to two different blob keys.
 func validateSha256Hex(s string) error {
 	if len(s) != 64 {
 		return errors.New("invalid hash length")
 	}
-	if _, err := hex.DecodeString(s); err != nil {
-		return errors.New("invalid hash format")
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return errors.New("invalid hash format")
+		}
 	}
 	return nil
 }

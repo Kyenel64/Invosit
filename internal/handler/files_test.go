@@ -154,8 +154,11 @@ func TestPushFile_RejectsBadPaths(t *testing.T) {
 func TestPushFile_RejectsBadHash(t *testing.T) {
 	bad := []string{
 		"tooshort",
-		strings.Repeat("z", 64), // not hex
-		strings.Repeat("a", 63), // wrong length
+		strings.Repeat("z", 64),                          // not hex
+		strings.Repeat("a", 63),                          // wrong length
+		strings.Repeat("A", 64),                          // uppercase — blob key would diverge
+		"ABCDEF" + strings.Repeat("a", 58),               // mixed case at start
+		strings.Repeat("a", 30) + "F" + strings.Repeat("a", 33), // single uppercase in middle
 	}
 	for _, hash := range bad {
 		t.Run(hash, func(t *testing.T) {
@@ -172,6 +175,37 @@ func TestPushFile_RejectsBadHash(t *testing.T) {
 				t.Errorf("status = %d, want 400", rec.Code)
 			}
 		})
+	}
+}
+
+// If presigning fails, the transaction must roll back so we don't end up
+// with files.content_hash pointing at a blob the client was never able to
+// upload. Verifies the ordering: all DB work happens inside the tx, presign
+// happens before Commit.
+func TestPushFile_RollsBackWhenPresignFails(t *testing.T) {
+	db, mock, _ := sqlmock.New()
+	defer db.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO files`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("file_xyz"))
+	mock.ExpectExec(`UPDATE file_versions SET is_current = FALSE`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO file_versions`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectRollback() // No ExpectCommit — presign failure should keep the tx open for rollback.
+
+	h := &Handler{db: db, blobs: &stubStorage{putErr: errors.New("storage down")}}
+	body := `{"path":"a","content_hash":"` + validHash + `","size":1}`
+	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body)).WithContext(pushCtx())
+	rec := httptest.NewRecorder()
+	h.PushFile(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
 	}
 }
 
