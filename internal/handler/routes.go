@@ -24,4 +24,7 @@ func AddRoutes(mux *http.ServeMux, h *Handler) {
 	wsMember := middleware.Chain(authed, middleware.WorkspaceMember(h.db)) // Must come after authed
 	mux.Handle("GET /api/v1/workspaces/{workspaceId}", wsMember(http.HandlerFunc(h.GetWorkspace)))
 	mux.Handle("DELETE /api/v1/workspaces/{workspaceId}", wsMember(http.HandlerFunc(h.DeleteWorkspace)))
+
+	mux.Handle("GET /api/v1/workspaces/{workspaceId}/environments", wsMember(http.HandlerFunc(h.ListEnvironments)))
+	mux.Handle("POST /api/v1/workspaces/{workspaceId}/environments", wsMember(http.HandlerFunc(h.CreateEnvironment)))
 }
