@@ -300,6 +300,203 @@ func (h *Handler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type rollbackRequest struct {
+	VersionID string `json:"version_id" validate:"required,startswith=ver_,max=64"`
+}
+
+// Returns the version history of a file, newest first.
+func (h *Handler) ListVersions(w http.ResponseWriter, r *http.Request) {
+	envID := httpx.EnvironmentID(r.Context())
+	fileID := r.PathValue("fileId")
+	if fileID == "" {
+		httpx.RespondError(w, http.StatusForbidden, "FORBIDDEN", "access denied")
+		return
+	}
+
+	var exists string
+	err := h.db.QueryRowContext(r.Context(),
+		`SELECT id FROM files WHERE id = $1 AND environment_id = $2`,
+		fileID, envID,
+	).Scan(&exists)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.RespondError(w, http.StatusForbidden, "FORBIDDEN", "access denied")
+			return
+		}
+		httpx.InternalError(w, r, err)
+		return
+	}
+
+	rows, err := h.db.QueryContext(r.Context(),
+		`SELECT id, file_id, content_hash, size, pushed_by, pushed_at, message, is_current
+		   FROM file_versions
+		  WHERE file_id = $1
+		  ORDER BY pushed_at DESC, id DESC`,
+		fileID,
+	)
+	if err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+	defer func() { _ = rows.Close() }()
+
+	versions := []map[string]any{}
+	for rows.Next() {
+		var (
+			id, fileIDOut, hash string
+			size                int64
+			pushedBy, message   sql.NullString
+			pushedAt            time.Time
+			isCurrent           bool
+		)
+		if err := rows.Scan(&id, &fileIDOut, &hash, &size, &pushedBy, &pushedAt, &message, &isCurrent); err != nil {
+			httpx.InternalError(w, r, err)
+			return
+		}
+		versions = append(versions, map[string]any{
+			"id":           id,
+			"file_id":      fileIDOut,
+			"content_hash": hash,
+			"size":         size,
+			"pushed_by":    pushedBy.String,
+			"pushed_at":    pushedAt,
+			"message":      message.String,
+			"is_current":   isCurrent,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"versions": versions})
+}
+
+// Moves is_current pointer to a prior version and mirrors the target
+// version's content metadata onto the parent files row.
+func (h *Handler) RollbackFile(w http.ResponseWriter, r *http.Request) {
+	uid := httpx.UserID(r.Context())
+	if uid == "" {
+		httpx.RespondError(w, http.StatusUnauthorized, "UNAUTHENTICATED", "authentication required")
+		return
+	}
+	envID := httpx.EnvironmentID(r.Context())
+	role := httpx.WorkspaceRole(r.Context())
+	fileID := r.PathValue("fileId")
+	if fileID == "" {
+		httpx.RespondError(w, http.StatusForbidden, "FORBIDDEN", "access denied")
+		return
+	}
+	if role == "viewer" {
+		httpx.RespondError(w, http.StatusForbidden, "FORBIDDEN", "write permission required")
+		return
+	}
+
+	var req rollbackRequest
+	if err := httpx.Bind(r, &req); err != nil {
+		httpx.RespondError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid rollback request")
+		return
+	}
+
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Lock the parent file row up front to serialise concurrent rollbacks
+	// against the same file. Without this, two rollbacks targeting different
+	// versions can each lock their own target row, then race on the demote
+	// step: in READ COMMITTED the second one's snapshot misses the first's
+	// freshly-promoted row, its predicate-based demote affects nothing, and
+	// its promote then violates the partial unique index on
+	// file_versions (file_id) WHERE is_current.
+	var path string
+	err = tx.QueryRowContext(r.Context(),
+		`SELECT path FROM files WHERE id = $1 AND environment_id = $2 FOR UPDATE`,
+		fileID, envID,
+	).Scan(&path)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.RespondError(w, http.StatusForbidden, "FORBIDDEN", "access denied")
+			return
+		}
+		httpx.InternalError(w, r, err)
+		return
+	}
+
+	// Pull and lock the target version. FOR UPDATE serialises concurrent
+	// rollbacks against the same target so the demote/promote sequence stays
+	// consistent — without it two simultaneous rollbacks could race against
+	// the partial unique index on is_current.
+	var (
+		targetHash     string
+		targetSize     int64
+		targetPushedBy sql.NullString
+		targetPushedAt time.Time
+	)
+	err = tx.QueryRowContext(r.Context(),
+		`SELECT content_hash, size, pushed_by, pushed_at
+		   FROM file_versions
+		  WHERE id = $1 AND file_id = $2
+		  FOR UPDATE`,
+		req.VersionID, fileID,
+	).Scan(&targetHash, &targetSize, &targetPushedBy, &targetPushedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.RespondError(w, http.StatusNotFound, "NOT_FOUND", "version not found")
+			return
+		}
+		httpx.InternalError(w, r, err)
+		return
+	}
+
+	// Demote before promoting. The partial unique index on
+	// file_versions (file_id) WHERE is_current would reject the promote
+	// otherwise.
+	if _, err := tx.ExecContext(r.Context(),
+		`UPDATE file_versions SET is_current = FALSE WHERE file_id = $1 AND is_current = TRUE`,
+		fileID,
+	); err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(),
+		`UPDATE file_versions SET is_current = TRUE WHERE id = $1`,
+		req.VersionID,
+	); err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+
+	// Mirror the target version's original metadata onto the parent row.
+	if _, err := tx.ExecContext(r.Context(),
+		`UPDATE files
+		    SET content_hash = $1, size = $2, pushed_by = $3, pushed_at = $4
+		  WHERE id = $5`,
+		targetHash, targetSize, targetPushedBy, targetPushedAt, fileID,
+	); err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":             fileID,
+		"environment_id": envID,
+		"path":           path,
+		"content_hash":   targetHash,
+		"size":           targetSize,
+		"pushed_by":      targetPushedBy.String,
+		"pushed_at":      targetPushedAt,
+	})
+}
+
 // reject "..", absolute paths, null bytes, and leading separators.
 func validateFilePath(p string) error {
 	if p == "" {
