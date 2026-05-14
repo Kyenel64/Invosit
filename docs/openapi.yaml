@@ -432,9 +432,12 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/FileVersion"
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FileVersion"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
