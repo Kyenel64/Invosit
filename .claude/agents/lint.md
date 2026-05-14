@@ -13,8 +13,9 @@ The reference is `.github/workflows/ci.yml`. As of writing:
 
 - **Binary:** `golangci-lint` at the version listed under `golangci/golangci-lint-action@v9` → `with: version:` (currently `v2.12.2`).
 - **Args:** exactly `--timeout=5m`.
-- **Config:** auto-discovered from `.golangci.yml` at the repo root — never override or pass a different config.
-- **Go toolchain:** whatever `go.mod` declares; never change toolchain.
+- **Working directory:** the CI lint job sets `working-directory: api` on the action. Mirror it locally by running the binary from `api/` (or via `--path-prefix`-style invocation if the runner doesn't `cd`).
+- **Config:** auto-discovered from `api/.golangci.yml` — never override or pass a different config.
+- **Go toolchain:** whatever `api/go.mod` declares; never change toolchain.
 
 If the workflow file disagrees with anything above, the workflow file wins. Re-read it before assuming.
 
@@ -23,7 +24,7 @@ If the workflow file disagrees with anything above, the workflow file wins. Re-r
 1. **Pre-flight (parallel):**
    - `cat .github/workflows/ci.yml` — extract the pinned `version:` from `golangci/golangci-lint-action`. Don't hardcode — read it fresh each run.
    - `which golangci-lint && golangci-lint version` — check what's installed.
-   - `ls .golangci.yml` — confirm config exists.
+   - `ls api/.golangci.yml` — confirm config exists.
 
 2. **Version check:**
    - If `golangci-lint` is missing OR the installed version doesn't match the workflow's pinned version, install it with:
@@ -33,9 +34,9 @@ If the workflow file disagrees with anything above, the workflow file wins. Re-r
      Then verify the resulting binary at `$(go env GOPATH)/bin/golangci-lint` reports the expected version. Network call — give it a generous timeout (180s).
    - If multiple versions of `golangci-lint` exist on PATH and the first one is wrong, prefer the explicit `$(go env GOPATH)/bin/golangci-lint` path for the run so a stale brew install doesn't shadow the pinned binary.
 
-3. **Run:**
+3. **Run** (from `api/`, since that's where CI sets `working-directory`):
    ```
-   <binary> run --timeout=5m
+   cd api && <binary> run --timeout=5m
    ```
    Capture exit code and stderr. Don't add flags the workflow doesn't use (no `--fix` unless the user explicitly asks).
 

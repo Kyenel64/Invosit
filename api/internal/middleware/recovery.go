@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"runtime/debug"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/httpx"
 )
 
 // Recovery catches panics from downstream handlers, logs the stack trace

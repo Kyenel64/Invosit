@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/httpx"
 )
 
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {

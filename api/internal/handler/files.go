@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
-	"github.com/kyenel64/invosit-api/internal/ids"
-	"github.com/kyenel64/invosit-api/internal/storage"
+	"github.com/kyenel64/invosit/api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/ids"
+	"github.com/kyenel64/invosit/api/internal/storage"
 )
 
 type pushFileRequest struct {

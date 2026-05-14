@@ -3,8 +3,8 @@ package handler
 import (
 	"database/sql"
 
-	"github.com/kyenel64/invosit-api/internal/kratos"
-	"github.com/kyenel64/invosit-api/internal/storage"
+	"github.com/kyenel64/invosit/api/internal/kratos"
+	"github.com/kyenel64/invosit/api/internal/storage"
 )
 
 type Handler struct {

@@ -20,13 +20,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.event.pull_request.draft == false || github.event_name == 'push'
+    defaults:
+      run:
+        working-directory: api
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: api/go.mod
           cache: true
+          cache-dependency-path: api/go.sum
 
       - name: Verify modules
         run: go mod verify
@@ -50,10 +54,12 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: api/go.mod
           cache: true
+          cache-dependency-path: api/go.sum
 
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           args: --timeout=5m
+          working-directory: api

@@ -7,8 +7,8 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
-	"github.com/kyenel64/invosit-api/internal/kratos"
+	"github.com/kyenel64/invosit/api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/kratos"
 )
 
 const fakeIdentityID = "00000000-0000-0000-0000-000000000001"

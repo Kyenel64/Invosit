@@ -13,7 +13,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/httpx"
 )
 
 func TestCreateWorkspace_Success(t *testing.T) {

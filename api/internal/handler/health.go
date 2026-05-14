@@ -3,7 +3,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/httpx"
 )
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {

@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
-	"github.com/kyenel64/invosit-api/internal/kratos"
+	"github.com/kyenel64/invosit/api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/kratos"
 )
 
 // RequireKratosSession validates the incoming request against Kratos and

@@ -10,7 +10,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/httpx"
 )
 
 func TestMe_Returns200WithUser(t *testing.T) {

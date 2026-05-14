@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/httpx"
 )
 
 // Verifies user id is a valid member of the workspace: /{workspaceId}.

@@ -1,4 +1,4 @@
-module github.com/kyenel64/invosit-api
+module github.com/kyenel64/invosit/api
 
 go 1.26.2
 

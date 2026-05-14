@@ -27,21 +27,29 @@ secure option even if it adds complexity.
 
 ## Project layout
 
-This repo (`github.com/kyenel64/Invosit`) holds both halves of the product:
+This repo (`github.com/kyenel64/invosit`) is a monorepo holding three product components:
 
 | Component | Location | Status |
 |---|---|---|
-| **API server** | `cmd/server/`, `internal/`, `migrations/`, `kratos/`, `db/init/` | shipping — most of this file describes it |
-| **CLI** | `cli/` | not yet built — see "The CLI" section below for intent |
-| **Documentation** | `docs/` | shared between API and CLI |
+| **API server** | `api/` (Go) | shipping — most of this file describes it |
+| **CLI** | `cli/` (Go, planned) | not yet built — see "The CLI" section below for intent |
+| **Frontend** | `frontend/` (web dashboard, planned) | not yet built — see "The frontend" section below for intent |
+| **Documentation** | `docs/` | shared between all clients |
 
-The API currently lives at the repo root. The CLI will land under `cli/` when
-work starts on it. If we later restructure to symmetrise (`api/` + `cli/`),
-this section gets updated and the API directories move accordingly.
+Each component is self-contained under its own top-level directory: its own
+build artifacts, language toolchain, and (for Go components) its own
+`go.mod`. Shared concerns live at the root — the OpenAPI contract in
+`docs/`, the dev-time `docker-compose.yml`, and this CLAUDE.md.
+
+The Go module path is `github.com/kyenel64/invosit/api` — matches the
+directory layout. Internal API packages live under
+`github.com/kyenel64/invosit/api/internal/...`.
 
 ---
 
 ## The API server
+
+> All paths in this section are relative to `api/` unless otherwise noted.
 
 The Go API server handles:
 
@@ -75,39 +83,50 @@ The API never sees plaintext file content. Ever.
 
 ### Directory structure (API)
 
+The repo root holds monorepo-wide orchestration; the API lives under `api/`.
+
 ```
-Invosit/
-├── cmd/
-│   └── server/
-│       └── main.go          # startup, config loading, route registration
-├── internal/
-│   ├── kratos/              # thin Kratos client (whoami)
-│   ├── workspace/           # workspace + member management
-│   ├── files/               # file metadata, versions, manifest
-│   ├── access/              # DEK wrapping, permission checks, grants
-│   ├── audit/               # audit log writes and queries
-│   ├── storage/             # storage interface + provider implementations
-│   │   ├── storage.go       # Storage interface, Config, New factory, errors, expiry validator
-│   │   └── s3.go            # AWS S3 + Cloudflare R2 (S3-compatible, diff endpoint)
-│   │                        # gcs.go is planned; not yet implemented
-│   ├── middleware/          # net/http middleware (see middleware section)
-│   ├── httpx/               # JSON bind/respond helpers, request ctx accessors
-│   ├── ids/                 # prefixed random ID generator
-│   ├── handler/             # HTTP handlers, one file per resource group
-│   │   ├── kratos_hook.go   # after-registration webhook from Kratos
-│   │   ├── me.go            # /auth/me
-│   │   ├── workspace.go
-│   │   ├── members.go
-│   │   ├── files.go
-│   │   ├── access.go
-│   │   └── audit.go
-│   └── db/                  # Postgres connection, query helpers
-├── kratos/                  # Kratos config (kratos.yml, identity schema, hooks)
-├── db/init/                 # Postgres init scripts (CREATE DATABASE kratos)
-├── migrations/              # numbered SQL files (001_init.sql, etc.)
-└── docs/
-    └── openapi.yaml         # OpenAPI 3.0 spec — lives here, not in frontend
+invosit/                          # monorepo root
+├── api/                          # ← this section describes everything under here
+│   ├── cmd/
+│   │   └── server/
+│   │       └── main.go           # startup, config loading, route registration
+│   ├── internal/
+│   │   ├── kratos/               # thin Kratos client (whoami)
+│   │   ├── storage/              # storage interface + provider implementations
+│   │   │   ├── storage.go        # Storage interface, Config, New factory, errors, expiry validator
+│   │   │   └── s3.go             # AWS S3 + Cloudflare R2 (S3-compatible, diff endpoint)
+│   │   │                         # gcs.go is planned; not yet implemented
+│   │   ├── middleware/           # net/http middleware (see middleware section)
+│   │   ├── httpx/                # JSON bind/respond helpers, request ctx accessors
+│   │   ├── ids/                  # prefixed random ID generator
+│   │   ├── handler/              # HTTP handlers, one file per resource group
+│   │   │   ├── kratos_hook.go    # after-registration webhook from Kratos
+│   │   │   ├── me.go             # /auth/me
+│   │   │   ├── workspace.go
+│   │   │   ├── environments.go
+│   │   │   ├── files.go
+│   │   │   ├── health.go
+│   │   │   └── routes.go         # route registration, middleware composition
+│   │   └── db/                   # Postgres connection, query helpers
+│   ├── kratos/                   # Kratos config (kratos.yml, identity schema, hooks)
+│   ├── db/init/                  # Postgres init scripts (CREATE DATABASE kratos)
+│   ├── migrations/               # numbered SQL files (001_init.sql, etc.)
+│   ├── go.mod
+│   ├── go.sum
+│   ├── Dockerfile
+│   └── .golangci.yml
+├── cli/                          # Go CLI — handles encryption (planned)
+├── frontend/                     # web dashboard (planned)
+├── docs/
+│   └── openapi.yaml              # OpenAPI 3.0 spec — shared by API + CLI + frontend
+└── docker-compose.yml            # dev orchestration: API + Postgres + Redis + Kratos
 ```
+
+Future `cli/` and `frontend/` get their own `go.mod` / `package.json` and
+build artifacts inside their own directories — they do **not** share Go
+imports with `api/internal/`, which is blocked at compile time by the
+`internal/` rule.
 
 ### Routing and middleware
 
@@ -296,6 +315,38 @@ Not yet built. When it lands it will live in `cli/` in this repo.
 When the CLI starts taking shape, the structure tree above gets an expanded
 `cli/` subtree, this section grows real entry points and commands, and
 "Running locally" splits into per-component subsections.
+
+---
+
+## The frontend
+
+Not yet built. When it lands it will live in `frontend/` in this repo.
+
+### Scope (intended)
+
+- Workspace and member management — create workspaces, invite/remove
+  members, manage roles.
+- Browsing file metadata, version history, and audit logs.
+- Managing access grants (path patterns, environment scoping).
+- Authentication via Ory Kratos **browser flow** (cookies — not the
+  CLI's API flow). Both clients hit the same `/sessions/whoami`
+  validation server-side.
+
+### Out of scope
+
+- **Plaintext file content.** The frontend sits in the same trust position
+  as the API: outside the encryption boundary. It must never decrypt file
+  bytes. Any feature requiring file content (preview, edit) is a CLI
+  responsibility, not a dashboard one.
+- **Private key material.** Keypairs live on user machines via the CLI.
+
+### Shared with the API
+
+- `docs/openapi.yaml` — same contract the CLI uses; the frontend's API
+  client is generated or hand-written off this.
+
+Tech stack will be picked when work on this component starts; until then
+treat this section as a scope/boundary note.
 
 ---
 
@@ -600,11 +651,16 @@ These apply across the monorepo. API-specific conventions are noted as such.
 ## Running locally
 
 ```bash
-cp .env.example .env
-docker compose up -d         # starts Postgres + Redis + Kratos
-go run ./cmd/server          # starts API on :8080
+cp .env.example .env             # root-level env / .env is consumed by docker compose
+docker compose up -d             # starts Postgres + Redis + Kratos
+cd api && go run ./cmd/server    # starts API on :8080
 ```
+
+Each Go-based component has its own `go.mod`, so Go commands (`go run`,
+`go test`, `go build`) run from inside the component directory — `api/`
+today, `cli/` later. There is no root-level `go.work` yet; we'll add one
+if/when working across modules simultaneously becomes routine.
 
 Migrations run automatically on startup.
 
-CLI build instructions will go here when `cli/` exists.
+CLI and frontend build instructions will go here when those components exist.

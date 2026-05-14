@@ -1,0 +1,5 @@
+# Build context is the api/ directory. Paths are relative to api/.
+Dockerfile
+.dockerignore
+.golangci.yml
+requests.http

@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kyenel64/invosit-api/internal/db"
-	"github.com/kyenel64/invosit-api/internal/handler"
-	"github.com/kyenel64/invosit-api/internal/kratos"
-	"github.com/kyenel64/invosit-api/internal/middleware"
-	"github.com/kyenel64/invosit-api/internal/storage"
+	"github.com/kyenel64/invosit/api/internal/db"
+	"github.com/kyenel64/invosit/api/internal/handler"
+	"github.com/kyenel64/invosit/api/internal/kratos"
+	"github.com/kyenel64/invosit/api/internal/middleware"
+	"github.com/kyenel64/invosit/api/internal/storage"
 )
 
 func main() {

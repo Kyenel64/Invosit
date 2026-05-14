@@ -27,12 +27,14 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version-file: api/go.mod
           cache: true
+          cache-dependency-path: api/go.sum
 
       - uses: golang/govulncheck-action@v1
         with:
-          go-version-file: go.mod
+          go-version-file: api/go.mod
+          work-dir: api
           repo-checkout: false
 
   gitleaks:

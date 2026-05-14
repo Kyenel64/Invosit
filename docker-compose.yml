@@ -1,6 +1,6 @@
 services:
   api:
-    build: .
+    build: ./api
     restart: unless-stopped
     depends_on:
       postgres:
@@ -39,7 +39,7 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./api/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -74,7 +74,7 @@ services:
       SELFSERVICE_FLOWS_REGISTRATION_AFTER_PASSWORD_HOOKS_0_CONFIG_AUTH_CONFIG_VALUE: ${KRATOS_WEBHOOK_SECRET}
       LOG_LEVEL: info
     volumes:
-      - ./kratos:/etc/config/kratos:ro
+      - ./api/kratos:/etc/config/kratos:ro
     # Migrations are idempotent — run them on every boot, then serve.
     entrypoint: ["/bin/sh", "-c"]
     command:

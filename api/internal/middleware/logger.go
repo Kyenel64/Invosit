@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/kyenel64/invosit-api/internal/httpx"
-	"github.com/kyenel64/invosit-api/internal/ids"
+	"github.com/kyenel64/invosit/api/internal/httpx"
+	"github.com/kyenel64/invosit/api/internal/ids"
 )
 
 // Logger logs method, path (no query string), status, duration, request ID,

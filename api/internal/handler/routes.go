@@ -3,7 +3,7 @@ package handler
 import (
 	"net/http"
 
-	"github.com/kyenel64/invosit-api/internal/middleware"
+	"github.com/kyenel64/invosit/api/internal/middleware"
 )
 
 func AddRoutes(mux *http.ServeMux, h *Handler) {
