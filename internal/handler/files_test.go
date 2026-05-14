@@ -154,10 +154,10 @@ func TestPushFile_RejectsBadPaths(t *testing.T) {
 func TestPushFile_RejectsBadHash(t *testing.T) {
 	bad := []string{
 		"tooshort",
-		strings.Repeat("z", 64),                          // not hex
-		strings.Repeat("a", 63),                          // wrong length
-		strings.Repeat("A", 64),                          // uppercase — blob key would diverge
-		"ABCDEF" + strings.Repeat("a", 58),               // mixed case at start
+		strings.Repeat("z", 64),            // not hex
+		strings.Repeat("a", 63),            // wrong length
+		strings.Repeat("A", 64),            // uppercase — blob key would diverge
+		"ABCDEF" + strings.Repeat("a", 58), // mixed case at start
 		strings.Repeat("a", 30) + "F" + strings.Repeat("a", 33), // single uppercase in middle
 	}
 	for _, hash := range bad {

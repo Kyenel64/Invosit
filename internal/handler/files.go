@@ -332,7 +332,7 @@ func validateSha256Hex(s string) error {
 		return errors.New("invalid hash length")
 	}
 	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return errors.New("invalid hash format")
 		}
 	}
