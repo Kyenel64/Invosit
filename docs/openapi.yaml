@@ -224,26 +224,104 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  # ── FILES ─────────────────────────────────
+  # ── ENVIRONMENTS ──────────────────────────
 
-  /workspaces/{workspaceId}/files:
+  /workspaces/{workspaceId}/environments:
     get:
-      tags: [Files]
-      summary: List files in workspace
-      description: Returns file metadata the current user has access to. Does not return file content.
+      tags: [Environments]
+      summary: List environments in the workspace
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/workspaceId"
       responses:
         "200":
+          description: List of environments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  environments:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Environment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+    post:
+      tags: [Environments]
+      summary: Create a new environment (admin only)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/workspaceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: Case-insensitive unique within the workspace
+                  example: staging
+      responses:
+        "201":
+          description: Environment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Environment"
+        "400":
+          description: Invalid name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Environment with that name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── FILES ─────────────────────────────────
+  #
+  # File operations are scoped per environment. The schema enforces
+  # uniqueness on (environment_id, path) and access_grants carry
+  # environment_id, so the environment is the natural parent in the URL.
+
+  /workspaces/{workspaceId}/environments/{environmentId}/files:
+    get:
+      tags: [Files]
+      summary: List files in environment
+      description: Returns file metadata the current user has access to. Does not return file content.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/workspaceId"
+        - $ref: "#/components/parameters/environmentId"
+      responses:
+        "200":
           description: List of tracked files
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/FileMeta"
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FileMeta"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -251,15 +329,21 @@ paths:
 
     post:
       tags: [Files]
-      summary: Push a file (upload encrypted blob)
+      summary: Push a file (register metadata + get signed upload URL)
       description: |
-        Uploads an encrypted file blob and its wrapped DEKs.
-        The file content must be encrypted client-side before upload.
-        Also adds the file path to .gitignore if not already present.
+        Registers a new version of a file in the environment and returns a
+        short-lived signed PUT URL the CLI uses to upload the (encrypted)
+        blob directly to storage. The DB row is created before the URL is
+        issued — a failed upload leaves an orphan version, not a missing one.
+
+        **MVP status (issue #11):** unencrypted iteration. `content_hash` is
+        the sha256 of the plaintext. M4 will add `wrapped_deks` to the request
+        and make `content_hash` the ciphertext hash.
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/workspaceId"
+        - $ref: "#/components/parameters/environmentId"
       requestBody:
         required: true
         content:
@@ -272,7 +356,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/FileMeta"
+                $ref: "#/components/schemas/FilePushResponse"
+        "400":
+          description: Invalid path, hash, or size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -284,21 +374,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /workspaces/{workspaceId}/files/{fileId}:
+  /workspaces/{workspaceId}/environments/{environmentId}/files/{fileId}:
     get:
       tags: [Files]
       summary: Get a signed download URL for a file
       description: |
-        Returns a short-lived signed R2 URL (15 min expiry) and the
-        caller's wrapped DEK so the CLI can download and decrypt the file.
+        Returns a short-lived signed URL (15 min expiry) plus the file's
+        metadata so the CLI can download (and, post-M4, decrypt) it.
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/workspaceId"
+        - $ref: "#/components/parameters/environmentId"
         - $ref: "#/components/parameters/fileId"
       responses:
         "200":
-          description: Signed URL and wrapped DEK
+          description: Signed URL and metadata
           content:
             application/json:
               schema:
@@ -307,16 +398,15 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
 
     delete:
       tags: [Files]
-      summary: Delete a file from the workspace
+      summary: Delete a file from the environment
       security:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/workspaceId"
+        - $ref: "#/components/parameters/environmentId"
         - $ref: "#/components/parameters/fileId"
       responses:
         "204":
@@ -325,10 +415,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
 
-  /workspaces/{workspaceId}/files/{fileId}/versions:
+  /workspaces/{workspaceId}/environments/{environmentId}/files/{fileId}/versions:
     get:
       tags: [Files]
       summary: List versions of a file
@@ -336,6 +424,7 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/workspaceId"
+        - $ref: "#/components/parameters/environmentId"
         - $ref: "#/components/parameters/fileId"
       responses:
         "200":
@@ -351,7 +440,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /workspaces/{workspaceId}/files/{fileId}/rollback:
+  /workspaces/{workspaceId}/environments/{environmentId}/files/{fileId}/rollback:
     post:
       tags: [Files]
       summary: Rollback a file to a previous version
@@ -359,6 +448,7 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: "#/components/parameters/workspaceId"
+        - $ref: "#/components/parameters/environmentId"
         - $ref: "#/components/parameters/fileId"
       requestBody:
         required: true
@@ -553,6 +643,14 @@ components:
         type: string
       example: file_xyz789
 
+    environmentId:
+      name: environmentId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: env_def456
+
     userId:
       name: userId
       in: path
@@ -645,22 +743,38 @@ components:
           type: string
           format: date-time
 
+    Environment:
+      type: object
+      properties:
+        id:
+          type: string
+          example: env_def456
+        workspace_id:
+          type: string
+          example: ws_abc123
+        name:
+          type: string
+          example: production
+        created_at:
+          type: string
+          format: date-time
+
     FileMeta:
       type: object
       properties:
         id:
           type: string
           example: file_xyz789
-        workspace_id:
+        environment_id:
           type: string
-          example: ws_abc123
+          example: env_def456
         path:
           type: string
           description: Relative path as it will appear on disk
           example: config/example.txt
         content_hash:
           type: string
-          description: SHA-256 hash of the plaintext file
+          description: SHA-256 hash of the file content (plaintext in MVP, ciphertext post-M4)
           example: a1b2c3d4e5f6...
         size:
           type: integer
@@ -672,64 +786,96 @@ components:
         pushed_at:
           type: string
           format: date-time
-        version_count:
-          type: integer
-          example: 3
 
     FilePushRequest:
       type: object
-      required: [path, content_hash, size, encrypted_blob_key, wrapped_deks]
+      required: [path, content_hash, size]
       properties:
         path:
           type: string
-          description: Relative path the file should be written to on pull
+          description: Relative path the file should be written to on pull. Must not be absolute, contain "..", null bytes, or start with a separator.
           example: config/example.txt
         content_hash:
           type: string
-          description: SHA-256 hash of the original plaintext (for integrity check on pull)
+          description: SHA-256 hash of the file content (plaintext in MVP, ciphertext post-M4). 64 lowercase hex chars.
           example: a1b2c3d4e5f6...
         size:
           type: integer
-          description: Original file size in bytes
+          description: File size in bytes
           example: 4096
-        encrypted_blob_key:
-          type: string
-          description: R2 object key where the encrypted blob is stored
-          example: blobs/a1b2c3d4e5f6
-        wrapped_deks:
-          type: array
-          description: DEK wrapped per authorized user
-          items:
-            type: object
-            properties:
-              user_id:
-                type: string
-                example: usr_def456
-              encrypted_dek:
-                type: string
-                description: Base64-encoded DEK encrypted with the user's public key
-                example: base64encodedencrypteddek==
         message:
           type: string
           description: Optional version message
-          example: updated system prompt
+          example: rotated API token
+
+    FilePushResponse:
+      type: object
+      description: |
+        Returned on successful push. The CLI uploads the (encrypted) blob
+        via a PUT to `upload_url` before the URL expires.
+      properties:
+        id:
+          type: string
+          example: file_xyz789
+        environment_id:
+          type: string
+          example: env_def456
+        path:
+          type: string
+          example: config/example.txt
+        content_hash:
+          type: string
+          example: a1b2c3d4e5f6...
+        size:
+          type: integer
+          example: 4096
+        pushed_by:
+          type: string
+          example: usr_def456
+        pushed_at:
+          type: string
+          format: date-time
+        version_id:
+          type: string
+          example: ver_9x8y7z
+        upload_url:
+          type: string
+          description: Short-lived signed PUT URL (15 min). Upload the blob here.
+          example: https://r2.invosit.dev/blobs/...?X-Amz-Expires=900&...
+        upload_expires_at:
+          type: string
+          format: date-time
 
     FileDownloadResponse:
       type: object
       properties:
-        signed_url:
+        id:
           type: string
-          description: Short-lived R2 signed URL (15 min expiry)
-          example: https://r2.invosit.dev/blobs/a1b2c3?X-Amz-Expires=900&...
-        encrypted_dek:
+          example: file_xyz789
+        environment_id:
           type: string
-          description: The caller's wrapped DEK to decrypt the blob
-          example: base64encodedencrypteddek==
+          example: env_def456
+        path:
+          type: string
+          example: config/example.txt
         content_hash:
           type: string
-          description: Expected SHA-256 hash to verify after decryption
+          description: Expected SHA-256 hash to verify after download (and post-M4 decryption)
           example: a1b2c3d4e5f6...
-        expires_at:
+        size:
+          type: integer
+          example: 4096
+        pushed_by:
+          type: string
+          example: usr_def456
+        pushed_at:
+          type: string
+          format: date-time
+        download_url:
+          type: string
+          description: Short-lived signed GET URL (15 min expiry)
+          example: https://r2.invosit.dev/blobs/a1b2c3?X-Amz-Expires=900&...
+        download_expires_at:
           type: string
           format: date-time
 
