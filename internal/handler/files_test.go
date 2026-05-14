@@ -506,7 +506,7 @@ func TestRollbackFile_Success(t *testing.T) {
 	targetPushedAt := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT path FROM files WHERE id = \$1 AND environment_id = \$2`).
+	mock.ExpectQuery(`SELECT path FROM files WHERE id = \$1 AND environment_id = \$2 FOR UPDATE`).
 		WithArgs("file_xyz", "env_abc").
 		WillReturnRows(sqlmock.NewRows([]string{"path"}).AddRow("config/.env"))
 	mock.ExpectQuery(`SELECT content_hash, size, pushed_by, pushed_at\s+FROM file_versions\s+WHERE id = \$1 AND file_id = \$2\s+FOR UPDATE`).

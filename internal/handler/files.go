@@ -405,10 +405,16 @@ func (h *Handler) RollbackFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Confirm the parent file lives in this env.
+	// Lock the parent file row up front to serialise concurrent rollbacks
+	// against the same file. Without this, two rollbacks targeting different
+	// versions can each lock their own target row, then race on the demote
+	// step: in READ COMMITTED the second one's snapshot misses the first's
+	// freshly-promoted row, its predicate-based demote affects nothing, and
+	// its promote then violates the partial unique index on
+	// file_versions (file_id) WHERE is_current.
 	var path string
 	err = tx.QueryRowContext(r.Context(),
-		`SELECT path FROM files WHERE id = $1 AND environment_id = $2`,
+		`SELECT path FROM files WHERE id = $1 AND environment_id = $2 FOR UPDATE`,
 		fileID, envID,
 	).Scan(&path)
 	if err != nil {
