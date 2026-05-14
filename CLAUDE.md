@@ -251,12 +251,18 @@ GET    /workspaces/:workspaceId/members
 POST   /workspaces/:workspaceId/members
 DELETE /workspaces/:workspaceId/members/:userId
 
-GET    /workspaces/:workspaceId/files
-POST   /workspaces/:workspaceId/files
-GET    /workspaces/:workspaceId/files/:fileId
-DELETE /workspaces/:workspaceId/files/:fileId
-GET    /workspaces/:workspaceId/files/:fileId/versions
-POST   /workspaces/:workspaceId/files/:fileId/rollback
+GET    /workspaces/:workspaceId/environments
+POST   /workspaces/:workspaceId/environments   # admin only
+
+# Files are scoped per environment. The schema enforces uniqueness on
+# (environment_id, path), and access_grants carry environment_id, so the
+# environment is the natural parent of a file in the URL.
+GET    /workspaces/:workspaceId/environments/:environmentId/files
+POST   /workspaces/:workspaceId/environments/:environmentId/files
+GET    /workspaces/:workspaceId/environments/:environmentId/files/:fileId
+DELETE /workspaces/:workspaceId/environments/:environmentId/files/:fileId
+GET    /workspaces/:workspaceId/environments/:environmentId/files/:fileId/versions
+POST   /workspaces/:workspaceId/environments/:environmentId/files/:fileId/rollback
 
 GET    /workspaces/:workspaceId/access
 POST   /workspaces/:workspaceId/access
@@ -333,17 +339,23 @@ compromised, files remain encrypted and unreadable.
 - No Redis caching of session validity — Kratos is the single source of
   truth (revisit if whoami latency becomes a bottleneck)
 
-### Authorization — three layers
+### Authorization — four layers
 
-Every file access request must pass all three:
+Every file access request must pass all four:
 
 1. **Kratos session middleware** (`RequireKratosSession`) — is the user authenticated?
-2. **Workspace membership middleware** — does the user belong to this workspace?
-3. **Wrapped DEK check** — does a `wrapped_deks` row exist for this user + file?
+2. **Workspace membership middleware** (`WorkspaceMember`) — does the user belong to this workspace?
+3. **Environment scope middleware** (`EnvironmentScoped`) — does `{environmentId}` belong to the workspace from layer 2? Files are uniquely identified by `(environment_id, path)`, so the env must be resolved and confirmed before any file lookup.
+4. **Wrapped DEK check** — does a `wrapped_deks` row exist for this user + file?
    No row = 403 regardless of role or workspace membership.
 
-Access is cryptographically enforced, not just a permission check. A member
+Access is cryptographically enforced (layer 4), not just a permission check. A member
 with no wrapped DEK cannot decrypt the file even if they bypass the API.
+
+**MVP status:** Layer 4 is not yet wired — file content is unencrypted in the
+M3 iteration (issue #11) so that the wire shape and storage plumbing can be
+validated end-to-end. Encryption + wrapped DEKs land in M4; until then layers
+1–3 are the only gate.
 
 ### Rate limiting
 
@@ -461,6 +473,7 @@ Global (wraps the entire mux):
 Per-route (wraps specific handlers):
 6. **RequireKratosSession** — validate the Bearer token / Kratos cookie via `/sessions/whoami`, look up the local user, attach `userID` to request context
 7. **WorkspaceMember** — verify membership for `{workspaceId}` (workspace routes only)
+8. **EnvironmentScoped** — verify `{environmentId}` belongs to the workspace from layer 7, attach `environmentID` to context (file routes only)
 
 ---
 
