@@ -9,6 +9,7 @@ const (
 	userIDKey
 	workspaceIDKey
 	workspaceRoleKey
+	environmentIDKey
 )
 
 func WithRequestID(ctx context.Context, id string) context.Context {
@@ -44,5 +45,14 @@ func WithWorkspaceRole(ctx context.Context, role string) context.Context {
 
 func WorkspaceRole(ctx context.Context) string {
 	v, _ := ctx.Value(workspaceRoleKey).(string)
+	return v
+}
+
+func WithEnvironmentID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, environmentIDKey, id)
+}
+
+func EnvironmentID(ctx context.Context) string {
+	v, _ := ctx.Value(environmentIDKey).(string)
 	return v
 }
