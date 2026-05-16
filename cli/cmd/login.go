@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/kyenel64/invosit/cli/internal/apiclient"
+	"github.com/kyenel64/invosit/cli/internal/credstore"
 	"github.com/kyenel64/invosit/cli/internal/kratos"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -16,6 +19,14 @@ var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to your invosit account",
 	RunE: func(cmd *cobra.Command, args []string) error {
+
+		// Build filestore
+		fileStore, err := credstore.NewFileStore("")
+		if err != nil {
+			return fmt.Errorf("init credstore: %w", err)
+		}
+
+		// Prompt email + password
 		reader := bufio.NewReader(os.Stdin)
 
 		fmt.Print("Email: ")
@@ -33,8 +44,9 @@ var loginCmd = &cobra.Command{
 		}
 		password := string(passwordBytes)
 
-		client := kratos.NewClient("http://localhost:4433") // TODO: config kratosURL
-		token, err := client.Login(cmd.Context(), email, password)
+		// Call kratos
+		kratosClient := kratos.NewClient("http://localhost:4433") // TODO: config kratosURL
+		token, err := kratosClient.Login(cmd.Context(), email, password)
 		if err != nil {
 			if errors.Is(err, kratos.ErrInvalidCredentials) {
 				return errors.New("invalid email or password")
@@ -42,8 +54,32 @@ var loginCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Println("logged in")
-		fmt.Println(token)
+		// Call /me to retrieve user id
+		apiClient := apiclient.NewClient("http://localhost:8080")
+		user, err := apiClient.Me(cmd.Context(), token)
+		if err != nil {
+			if errors.Is(err, apiclient.ErrUnauthorized) {
+				return errors.New("login succeeded but server doesn't recognize this user — check the registration webhook")
+			}
+			return fmt.Errorf("/me request: %w", err)
+		}
+
+		// Build and store creds
+		creds := credstore.Credentials{
+			Version:      credstore.SchemaVersion,
+			Email:        email,
+			UserID:       user.ID,
+			SessionToken: token,
+			KratosURL:    "http://localhost:4433",
+			APIURL:       "http://localhost:8080",
+			SavedAt:      time.Now(),
+		}
+		err = fileStore.Save(creds)
+		if err != nil {
+			return fmt.Errorf("store credentials: %w", err)
+		}
+
+		fmt.Printf("logged in as %s\n", user.Email)
 		return nil
 	},
 }
