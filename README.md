@@ -15,7 +15,9 @@
     <a href="https://github.com/kyenel64/invosit/actions/workflows/security.yml">
       <img src="https://github.com/kyenel64/invosit/actions/workflows/security.yml/badge.svg" alt="Security">
     </a>
-    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT">
+    <a href="./LICENSE">
+      <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License: Apache 2.0">
+    </a>
     <img src="https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go&logoColor=white" alt="Go 1.26+">
   </p>
 </div>
@@ -51,4 +53,4 @@ docker compose up -d # start Postgres, Redis, Kratos
 
 ## License
 
-MIT
+Licensed under the [Apache License, Version 2.0](./LICENSE).
