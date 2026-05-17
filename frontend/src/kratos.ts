@@ -4,6 +4,7 @@
 const KRATOS_URL = "http://127.0.0.1:4433";
 
 export const LOGIN_BROWSER_INIT = `${KRATOS_URL}/self-service/login/browser`;
+export const LOGIN_API_INIT = `${KRATOS_URL}/self-service/login/api`;
 
 export interface UiText {
   id: number;
@@ -65,6 +66,21 @@ export async function fetchLoginFlow(flowId: string): Promise<LoginFlow> {
   return res.json();
 }
 
+// initApiLoginFlow starts a Kratos native (API) login flow and returns
+// the flow object directly — no redirect, no cookie. Used by the
+// CLI-handoff path: the frontend submits credentials to this flow and
+// receives a session_token in the response, which it then hands to the
+// CLI loopback.
+export async function initApiLoginFlow(): Promise<LoginFlow> {
+  const res = await fetch(LOGIN_API_INIT, {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    throw new Error(`failed to init api login flow: ${res.status}`);
+  }
+  return res.json();
+}
+
 export function csrfTokenFromFlow(flow: LoginFlow): string {
   const node = flow.ui.nodes.find(
     (n) => n.attributes.name === "csrf_token" && n.attributes.type === "hidden",
@@ -75,6 +91,7 @@ export function csrfTokenFromFlow(flow: LoginFlow): string {
 export interface SubmitResult {
   ok: true;
   redirectTo: string | null;
+  sessionToken?: string; // present only for API flows
 }
 
 export interface SubmitFailure {
@@ -107,8 +124,14 @@ export async function submitPasswordLogin(
   }
 
   if (res.ok) {
-    const body = (await res.json()) as LoginSuccess;
-    return { ok: true, redirectTo: body.redirect_browser_to ?? null };
+    const body = (await res.json()) as LoginSuccess & {
+      session_token?: string;
+    };
+    return {
+      ok: true,
+      redirectTo: body.redirect_browser_to ?? null,
+      sessionToken: body.session_token,
+    };
   }
 
   if (res.status === 400) {

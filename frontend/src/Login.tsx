@@ -5,10 +5,31 @@ import {
   FlowExpiredError,
   collectErrorMessages,
   fetchLoginFlow,
+  initApiLoginFlow,
   submitPasswordLogin,
 } from "./kratos";
 
 type Status = "loading" | "ready" | "submitting" | "expired" | "error";
+
+// CLI-handoff mode: when the URL has `?cli_callback=<loopback url>`,
+// the page is being driven by the local invosit CLI. We initialize a
+// Kratos *API* flow (no cookie session, returns a session_token in the
+// submit response) and forward the session_token to the loopback after
+// a successful sign-in.
+function readCliCallback(): string | null {
+  return new URLSearchParams(window.location.search).get("cli_callback");
+}
+
+function isAllowedCliCallback(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:") return false;
+    if (u.hostname !== "127.0.0.1" && u.hostname !== "localhost") return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function Login() {
   const [status, setStatus] = useState<Status>("loading");
@@ -17,7 +38,24 @@ export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  const cliCallback = readCliCallback();
+  const cliMode = cliCallback !== null && isAllowedCliCallback(cliCallback);
+
   useEffect(() => {
+    if (cliMode) {
+      initApiLoginFlow()
+        .then((f) => {
+          setFlow(f);
+          setErrors(collectErrorMessages(f));
+          setStatus("ready");
+        })
+        .catch((err) => {
+          setErrors([err instanceof Error ? err.message : "unknown error"]);
+          setStatus("error");
+        });
+      return;
+    }
+
     const flowId = new URLSearchParams(window.location.search).get("flow");
     if (!flowId) {
       window.location.assign(LOGIN_BROWSER_INIT);
@@ -37,7 +75,7 @@ export function Login() {
           setStatus("error");
         }
       });
-  }, []);
+  }, [cliMode]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -47,6 +85,11 @@ export function Login() {
     try {
       const result = await submitPasswordLogin(flow, email, password);
       if (result.ok) {
+        if (cliMode && cliCallback && result.sessionToken) {
+          const target = `${cliCallback}?token=${encodeURIComponent(result.sessionToken)}`;
+          window.location.assign(target);
+          return;
+        }
         window.location.assign(result.redirectTo ?? "/");
         return;
       }
@@ -77,7 +120,16 @@ export function Login() {
 
   return (
     <form onSubmit={onSubmit} className="w-80 space-y-3">
-      <h1 className="text-lg font-semibold">Sign in to Invosit</h1>
+      <h1 className="text-lg font-semibold">
+        {cliMode ? "Sign in to Invosit CLI" : "Sign in to Invosit"}
+      </h1>
+
+      {cliMode && (
+        <p className="text-xs text-gray-500">
+          You're signing in from the invosit CLI. After sign-in this tab will
+          hand off to your terminal.
+        </p>
+      )}
 
       {errors.length > 0 && (
         <div className="text-sm text-red-600">
