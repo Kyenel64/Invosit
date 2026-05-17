@@ -67,7 +67,7 @@ func (s *FileStore) Save(c Credentials) error {
 		return fmt.Errorf("failed to create dir %s: %w", dir, err)
 	}
 
-	data, err := json.MarshalIndent(c, "", "  ")
+	data, err := json.MarshalIndent(c, "", "  ") //nolint:gosec // G117
 	if err != nil {
 		return fmt.Errorf("failed to encode credentials: %w", err)
 	}

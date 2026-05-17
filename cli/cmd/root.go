@@ -6,8 +6,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-
-
 var rootCmd = &cobra.Command{
 	Use:   "invosit",
 	Short: "File sync for gitignored files.",
@@ -29,5 +27,3 @@ func Execute() {
 func init() {
 	rootCmd.CompletionOptions.HiddenDefaultCmd = false // TODO: Make true in prod
 }
-
-

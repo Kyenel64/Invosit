@@ -76,7 +76,7 @@ func (c *Client) initLoginFlow(ctx context.Context) (loginFlowResponse, error) {
 
 // submitCredentials calls the login using the flow action. Returns session token
 func (c *Client) submitCredentials(ctx context.Context, action string, email string, password string) (string, error) {
-	body, err := json.Marshal(loginSubmitRequest{
+	body, err := json.Marshal(loginSubmitRequest{ //nolint:gosec // G117
 		Method:     "password",
 		Identifier: email,
 		Password:   password,
