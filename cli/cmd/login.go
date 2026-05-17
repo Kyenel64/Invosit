@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -15,47 +17,43 @@ import (
 	"golang.org/x/term"
 )
 
+const (
+	defaultKratosURL = "http://localhost:4433"
+	defaultAPIURL    = "http://localhost:8080"
+	defaultUIURL     = "http://127.0.0.1:5173"
+)
+
+var (
+	loginFlagPassword bool
+	loginFlagWeb      bool
+)
+
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Login to your invosit account",
+	Short: "Login to invosit",
 	RunE: func(cmd *cobra.Command, args []string) error {
-
-		// --- Build filestore ---
 		fileStore, err := credstore.NewFileStore("")
 		if err != nil {
 			return fmt.Errorf("failed to create new filestore: %w", err)
 		}
 
-		// --- Prompt email + password ---
-		reader := bufio.NewReader(os.Stdin)
+		kratosURL := defaultKratosURL
+		apiURL := defaultAPIURL
 
-		fmt.Print("Email: ")
-		email, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("failed to read email input: %w", err)
+		var (
+			email string
+			token string
+		)
+		if loginFlagPassword {
+			email, token, err = runPasswordLogin(cmd.Context(), kratosURL, cmd.InOrStdin(), cmd.ErrOrStderr())
+		} else {
+			email, token, err = runBrowserLogin(cmd.Context(), kratosURL, cmd.ErrOrStderr())
 		}
-		email = strings.TrimSpace(email)
-
-		fmt.Print("Password: ")
-		passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println()
 		if err != nil {
-			return fmt.Errorf("failed to read password: %w", err)
-		}
-		password := string(passwordBytes)
-
-		// --- Call login ---
-		kratosClient := kratos.NewClient("http://localhost:4433") // TODO: config kratosURL
-		token, err := kratosClient.Login(cmd.Context(), email, password)
-		if err != nil {
-			if errors.Is(err, kratos.ErrInvalidCredentials) {
-				return errors.New("invalid email or password")
-			}
 			return err
 		}
 
-		// --- Retrieve user id ---
-		apiClient := apiclient.NewClient("http://localhost:8080")
+		apiClient := apiclient.NewClient(apiURL)
 		user, err := apiClient.Me(cmd.Context(), token)
 		if err != nil {
 			if errors.Is(err, apiclient.ErrUnauthorized) {
@@ -64,25 +62,84 @@ var loginCmd = &cobra.Command{
 			return err
 		}
 
-		// --- Save credentials ---
+		// If the password flow was used, the user typed their email already
+		// and we have it directly; the browser flow doesn't know the email
+		// up front, so we use whatever /auth/me returned. Use the API
+		// response as authoritative either way.
+		_ = email
+
 		err = fileStore.Save(credstore.Credentials{
 			Version:      credstore.SchemaVersion,
-			Email:        email,
+			Email:        user.Email,
 			UserID:       user.ID,
 			SessionToken: token,
-			KratosURL:    "http://localhost:4433",
-			APIURL:       "http://localhost:8080",
+			KratosURL:    kratosURL,
+			APIURL:       apiURL,
 			SavedAt:      time.Now(),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to save credentials: %w", err)
 		}
 
-		fmt.Printf("logged in as %s\n", user.Email)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "logged in as %s\n", user.Email)
 		return nil
 	},
 }
 
 func init() {
+	loginCmd.Flags().BoolVar(&loginFlagPassword, "password", false, "Sign in by entering email and password in the terminal")
+	loginCmd.Flags().BoolVar(&loginFlagWeb, "web", false, "Sign in via the browser (default)")
+	loginCmd.MarkFlagsMutuallyExclusive("password", "web")
 	rootCmd.AddCommand(loginCmd)
+}
+
+// runPasswordLogin runs the legacy email+password flow against the Kratos
+// API endpoint. Returns the email the user typed (used downstream for
+// /auth/me) and the session token.
+func runPasswordLogin(ctx context.Context, kratosURL string, stdin io.Reader, stderr io.Writer) (string, string, error) {
+	reader := bufio.NewReader(stdin)
+
+	_, _ = fmt.Fprint(stderr, "Email: ")
+	email, err := reader.ReadString('\n')
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read email input: %w", err)
+	}
+	email = strings.TrimSpace(email)
+
+	_, _ = fmt.Fprint(stderr, "Password: ")
+	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+	_, _ = fmt.Fprintln(stderr)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read password: %w", err)
+	}
+	password := string(passwordBytes)
+
+	client := kratos.NewClient(kratosURL)
+	token, err := client.Login(ctx, email, password)
+	if err != nil {
+		if errors.Is(err, kratos.ErrInvalidCredentials) {
+			return "", "", errors.New("invalid email or password")
+		}
+		return "", "", err
+	}
+	return email, token, nil
+}
+
+// runBrowserLogin runs the browser-based login flow: opens the invosit
+// web UI in a browser, waits on a loopback listener for the frontend to
+// hand back a session token.
+func runBrowserLogin(ctx context.Context, kratosURL string, stderr io.Writer) (string, string, error) {
+	client := kratos.NewClient(kratosURL)
+	token, err := client.BrowserLogin(ctx, kratos.BrowserLoginOpts{
+		UIBaseURL: defaultUIURL,
+		Timeout:   5 * time.Minute,
+		Stderr:    stderr,
+	})
+	if err != nil {
+		if errors.Is(err, kratos.ErrBrowserLoginTimeout) {
+			return "", "", errors.New("browser sign-in timed out — try again, or use --password")
+		}
+		return "", "", err
+	}
+	return "", token, nil
 }

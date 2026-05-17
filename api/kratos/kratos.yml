@@ -32,6 +32,13 @@ selfservice:
   default_browser_return_url: http://127.0.0.1:5173/
   allowed_return_urls:
     - http://127.0.0.1:5173
+    # CLI browser-login loopback. Today the handoff goes
+    # frontend -> CLI directly (not through Kratos's return_to), but we
+    # allowlist the callback URL anyway so we can switch to the Ory
+    # exchange-code pattern once OIDC/passkey lands and Kratos supports
+    # it for those methods.
+    - http://127.0.0.1:33405/callback
+    - http://localhost:33405/callback
 
   methods:
     password:
