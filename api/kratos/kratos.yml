@@ -42,6 +42,23 @@ selfservice:
       enabled: false
     code:
       enabled: false
+    oidc:
+      enabled: true
+      config:
+        providers:
+          - id: github
+            provider: github
+            # client_id / client_secret are placeholders; the real
+            # values come from GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET
+            # via Kratos's uppercase-path env override in
+            # docker-compose.yml — same pattern as the other secrets.
+            client_id: REPLACE_WITH_GITHUB_CLIENT_ID
+            client_secret: REPLACE_WITH_GITHUB_CLIENT_SECRET
+            mapper_url: file:///etc/config/kratos/oidc.github.jsonnet
+            # `user:email` is required to read the user's primary
+            # verified email from GitHub's /user/emails endpoint.
+            scope:
+              - user:email
 
   flows:
     error:
@@ -65,6 +82,25 @@ selfservice:
       lifespan: 10m
       after:
         password:
+          hooks:
+            - hook: web_hook
+              config:
+                url: http://api:8080/internal/hooks/kratos/after-registration
+                method: POST
+                body: file:///etc/config/kratos/hooks/after-registration.jsonnet
+                response:
+                  ignore: false
+                auth:
+                  type: api_key
+                  config:
+                    name: X-Kratos-Webhook-Secret
+                    value: REPLACE_WITH_KRATOS_WEBHOOK_SECRET
+                    in: header
+            - hook: session
+        # OIDC signups need the same webhook hop as password signups —
+        # without this, GitHub sign-in creates a Kratos identity but no
+        # local `users` row, and the API will 401 the user.
+        oidc:
           hooks:
             - hook: web_hook
               config:

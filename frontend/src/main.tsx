@@ -1,25 +1,25 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { Login } from "./Login";
-import { CliSuccess } from "./CliSuccess";
+import { createRouter, RouterProvider } from "@tanstack/react-router";
+import { routeTree } from "./routeTree.gen";
 import "./styles.css";
+
+const router = createRouter({
+  routeTree,
+  defaultPreload: "intent",
+});
+
+declare module "@tanstack/react-router" {
+  interface Register {
+    router: typeof router;
+  }
+}
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
 
-function Page() {
-  switch (window.location.pathname) {
-    case "/cli-success":
-      return <CliSuccess />;
-    default:
-      return <Login />;
-  }
-}
-
 createRoot(root).render(
   <StrictMode>
-    <div className="min-h-screen flex items-center justify-center">
-      <Page />
-    </div>
+    <RouterProvider router={router} />
   </StrictMode>,
 );

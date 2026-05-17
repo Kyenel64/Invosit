@@ -4,7 +4,32 @@
 const KRATOS_URL = "http://127.0.0.1:4433";
 
 export const LOGIN_BROWSER_INIT = `${KRATOS_URL}/self-service/login/browser`;
-export const LOGIN_API_INIT = `${KRATOS_URL}/self-service/login/api`;
+export const WHOAMI = `${KRATOS_URL}/sessions/whoami`;
+
+export interface Identity {
+  id: string;
+  traits: { email?: string } & Record<string, unknown>;
+}
+
+export interface Session {
+  id: string;
+  active: boolean;
+  identity: Identity;
+}
+
+// whoami returns the current session if the browser has a valid Kratos
+// session cookie, or null if not signed in. Kratos returns 401 when no
+// session exists; treat that as "not signed in" rather than an error so
+// callers can branch cleanly.
+export async function whoami(): Promise<Session | null> {
+  const res = await fetch(WHOAMI, {
+    headers: { Accept: "application/json" },
+    credentials: "include",
+  });
+  if (res.status === 401 || res.status === 403) return null;
+  if (!res.ok) throw new Error(`whoami failed: ${res.status}`);
+  return res.json();
+}
 
 export interface UiText {
   id: number;
@@ -66,21 +91,6 @@ export async function fetchLoginFlow(flowId: string): Promise<LoginFlow> {
   return res.json();
 }
 
-// initApiLoginFlow starts a Kratos native (API) login flow and returns
-// the flow object directly — no redirect, no cookie. Used by the
-// CLI-handoff path: the frontend submits credentials to this flow and
-// receives a session_token in the response, which it then hands to the
-// CLI loopback.
-export async function initApiLoginFlow(): Promise<LoginFlow> {
-  const res = await fetch(LOGIN_API_INIT, {
-    headers: { Accept: "application/json" },
-  });
-  if (!res.ok) {
-    throw new Error(`failed to init api login flow: ${res.status}`);
-  }
-  return res.json();
-}
-
 export function csrfTokenFromFlow(flow: LoginFlow): string {
   const node = flow.ui.nodes.find(
     (n) => n.attributes.name === "csrf_token" && n.attributes.type === "hidden",
@@ -91,12 +101,76 @@ export function csrfTokenFromFlow(flow: LoginFlow): string {
 export interface SubmitResult {
   ok: true;
   redirectTo: string | null;
-  sessionToken?: string; // present only for API flows
 }
 
 export interface SubmitFailure {
   ok: false;
   flow: LoginFlow;
+}
+
+// listOidcProviders returns the OIDC submit buttons present in a flow.
+// Kratos adds one node per configured provider when the OIDC strategy
+// is enabled in kratos.yml. Each node's `attributes.value` is the
+// provider id we send back on submit; `meta.label.text` is a
+// human-readable label ("Sign in with github").
+export interface OidcProvider {
+  id: string;
+  label: string;
+}
+export function listOidcProviders(flow: LoginFlow): OidcProvider[] {
+  return flow.ui.nodes
+    .filter(
+      (n) =>
+        n.group === "oidc" &&
+        n.attributes.type === "submit" &&
+        n.attributes.name === "provider" &&
+        typeof n.attributes.value === "string",
+    )
+    .map((n) => ({
+      id: n.attributes.value as string,
+      label:
+        (n as { meta?: { label?: { text?: string } } }).meta?.label?.text ??
+        `Sign in with ${n.attributes.value}`,
+    }));
+}
+
+// submitOidcLogin starts the OIDC handoff. Submitting `provider=<id>`
+// to the flow action returns (with Accept: application/json) a
+// `redirect_browser_to` URL pointing at the IdP's authorize endpoint.
+// The caller navigates there; the browser then completes the OAuth
+// dance through the provider and back to Kratos's callback.
+export async function submitOidcLogin(
+  flow: LoginFlow,
+  providerId: string,
+): Promise<string> {
+  const res = await fetch(flow.ui.action, {
+    method: flow.ui.method,
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      method: "oidc",
+      provider: providerId,
+      csrf_token: csrfTokenFromFlow(flow),
+    }),
+  });
+
+  // Kratos returns 422 with a redirect_browser_to when the flow needs
+  // to bounce the user through the IdP. 200 here would mean a
+  // surprise — there's no path to a "synchronous" OIDC success.
+  if (res.status === 422 || res.ok) {
+    const body = (await res.json()) as { redirect_browser_to?: string };
+    if (!body.redirect_browser_to) {
+      throw new Error("OIDC submit succeeded but no redirect URL was returned");
+    }
+    return body.redirect_browser_to;
+  }
+  if (res.status === 410 || res.status === 403) {
+    throw new FlowExpiredError();
+  }
+  throw new Error(`OIDC submit failed: ${res.status}`);
 }
 
 export async function submitPasswordLogin(
@@ -124,14 +198,8 @@ export async function submitPasswordLogin(
   }
 
   if (res.ok) {
-    const body = (await res.json()) as LoginSuccess & {
-      session_token?: string;
-    };
-    return {
-      ok: true,
-      redirectTo: body.redirect_browser_to ?? null,
-      sessionToken: body.session_token,
-    };
+    const body = (await res.json()) as LoginSuccess;
+    return { ok: true, redirectTo: body.redirect_browser_to ?? null };
   }
 
   if (res.status === 400) {
