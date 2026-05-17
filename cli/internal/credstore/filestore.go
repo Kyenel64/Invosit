@@ -19,7 +19,7 @@ func NewFileStore(pathOverride string) (*FileStore, error) {
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
-		return nil, fmt.Errorf("resolve user config dir: %w", err)
+		return nil, fmt.Errorf("failed to resolve user config directory: %w", err)
 	}
 	return &FileStore{path: filepath.Join(dir, "invosit", "credentials.json")}, nil
 }
@@ -32,7 +32,7 @@ func (s *FileStore) Load() (Credentials, error) {
 		return Credentials{}, ErrNotFound
 	}
 	if err != nil {
-		return Credentials{}, fmt.Errorf("open %s: %w", s.path, err)
+		return Credentials{}, fmt.Errorf("failed to open %s: %w", s.path, err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -40,7 +40,7 @@ func (s *FileStore) Load() (Credentials, error) {
 	if runtime.GOOS != "windows" {
 		info, err := f.Stat()
 		if err != nil {
-			return Credentials{}, fmt.Errorf("stat %s: %w", s.path, err)
+			return Credentials{}, fmt.Errorf("failed to retrieve stat %s: %w", s.path, err)
 		}
 		if perm := info.Mode().Perm(); perm&0o077 != 0 {
 			return Credentials{}, fmt.Errorf("%w: %s has mode %#o", ErrInsecurePerms, s.path, perm)
@@ -49,7 +49,7 @@ func (s *FileStore) Load() (Credentials, error) {
 
 	var c Credentials
 	if err := json.NewDecoder(f).Decode(&c); err != nil {
-		return Credentials{}, fmt.Errorf("decode %s: %w", s.path, err)
+		return Credentials{}, fmt.Errorf("failed to decode credentials at %s: %w", s.path, err)
 	}
 	return c, nil
 }
@@ -61,12 +61,12 @@ func (s *FileStore) Save(c Credentials) error {
 
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create dir %s: %w", dir, err)
+		return fmt.Errorf("failed to create dir %s: %w", dir, err)
 	}
 
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode credentials: %w", err)
+		return fmt.Errorf("failed to encode credentials: %w", err)
 	}
 
 	// Write-temp + rename. Makes the swap atomic, so a crash mid-write can't
@@ -77,18 +77,18 @@ func (s *FileStore) Save(c Credentials) error {
 	}
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("chmod %s: %w", tmp, err)
+		return fmt.Errorf("failed to chmod %s: %w", tmp, err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("rename %s: %w", tmp, err)
+		return fmt.Errorf("failed to rename %s: %w", tmp, err)
 	}
 	return nil
 }
 
 func (s *FileStore) Clear() error {
 	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove %s: %w", s.path, err)
+		return fmt.Errorf("failed to remove %s: %w", s.path, err)
 	}
 	return nil
 }

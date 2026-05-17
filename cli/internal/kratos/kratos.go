@@ -48,19 +48,19 @@ func (c *Client) Login(ctx context.Context, email string, password string) (stri
 	// Initialize Flow
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/self-service/login/api", nil)
 	if err != nil {
-		return "", fmt.Errorf("build login flow init request: %w", err)
+		return "", fmt.Errorf("failed to create login flow request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("send login flow init request: %w", err)
+		return "", fmt.Errorf("failed request to login flow: %w", err)
 	}
 	defer res.Body.Close()
 
 	var flow loginFlowResponse
 	if err := json.NewDecoder(res.Body).Decode(&flow); err != nil {
-		return "", fmt.Errorf("decode login flow response: %w", err)
+		return "", fmt.Errorf("failed to decode login flow response: %w", err)
 	}
 
 	// Submit credentials
@@ -70,19 +70,19 @@ func (c *Client) Login(ctx context.Context, email string, password string) (stri
 		Password:   password,
 	})
 	if err != nil {
-		return "", fmt.Errorf("encode login submit body: %w", err)
+		return "", fmt.Errorf("failed to encode login submit body: %w", err)
 	}
 
 	loginReq, err := http.NewRequestWithContext(ctx, http.MethodPost, flow.UI.Action, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("build login submit request: %w", err)
+		return "", fmt.Errorf("failed to create login request: %w", err)
 	}
 	loginReq.Header.Set("Accept", "application/json")
 	loginReq.Header.Set("Content-Type", "application/json")
 
 	loginRes, err := c.httpClient.Do(loginReq)
 	if err != nil {
-		return "", fmt.Errorf("send login submit request: %w", err)
+		return "", fmt.Errorf("failed request to login: %w", err)
 	}
 	defer loginRes.Body.Close()
 
@@ -90,7 +90,7 @@ func (c *Client) Login(ctx context.Context, email string, password string) (stri
 	case http.StatusOK:
 		var out loginSubmitResponse
 		if err := json.NewDecoder(loginRes.Body).Decode(&out); err != nil {
-			return "", fmt.Errorf("decode login submit response: %w", err)
+			return "", fmt.Errorf("failed to decode login submit response: %w", err)
 		}
 		return out.SessionToken, nil
 	case http.StatusBadRequest:

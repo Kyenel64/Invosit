@@ -20,19 +20,19 @@ var loginCmd = &cobra.Command{
 	Short: "Login to your invosit account",
 	RunE: func(cmd *cobra.Command, args []string) error {
 
-		// Build filestore
+		// --- Build filestore ---
 		fileStore, err := credstore.NewFileStore("")
 		if err != nil {
-			return fmt.Errorf("init credstore: %w", err)
+			return fmt.Errorf("failed to create new filestore: %w", err)
 		}
 
-		// Prompt email + password
+		// --- Prompt email + password ---
 		reader := bufio.NewReader(os.Stdin)
 
 		fmt.Print("Email: ")
 		email, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("read email: %w", err)
+			return fmt.Errorf("failed to read email input: %w", err)
 		}
 		email = strings.TrimSpace(email)
 
@@ -40,11 +40,11 @@ var loginCmd = &cobra.Command{
 		passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Println()
 		if err != nil {
-			return fmt.Errorf("read password: %w", err)
+			return fmt.Errorf("failed to read password: %w", err)
 		}
 		password := string(passwordBytes)
 
-		// Call kratos
+		// --- Call login ---
 		kratosClient := kratos.NewClient("http://localhost:4433") // TODO: config kratosURL
 		token, err := kratosClient.Login(cmd.Context(), email, password)
 		if err != nil {
@@ -54,18 +54,18 @@ var loginCmd = &cobra.Command{
 			return err
 		}
 
-		// Call /me to retrieve user id
+		// --- Retrieve user id ---
 		apiClient := apiclient.NewClient("http://localhost:8080")
 		user, err := apiClient.Me(cmd.Context(), token)
 		if err != nil {
 			if errors.Is(err, apiclient.ErrUnauthorized) {
-				return errors.New("login succeeded but server doesn't recognize this user — check the registration webhook")
+				return errors.New("login succeeded but server doesn't recognize this user. Check the registration webhook")
 			}
-			return fmt.Errorf("/me request: %w", err)
+			return err
 		}
 
-		// Build and store creds
-		creds := credstore.Credentials{
+		// --- Save credentials ---
+		err = fileStore.Save(credstore.Credentials{
 			Version:      credstore.SchemaVersion,
 			Email:        email,
 			UserID:       user.ID,
@@ -73,10 +73,9 @@ var loginCmd = &cobra.Command{
 			KratosURL:    "http://localhost:4433",
 			APIURL:       "http://localhost:8080",
 			SavedAt:      time.Now(),
-		}
-		err = fileStore.Save(creds)
+		})
 		if err != nil {
-			return fmt.Errorf("store credentials: %w", err)
+			return fmt.Errorf("failed to save credentials: %w", err)
 		}
 
 		fmt.Printf("logged in as %s\n", user.Email)

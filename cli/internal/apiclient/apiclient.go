@@ -32,14 +32,14 @@ func NewClient(baseURL string) *Client {
 func (c *Client) Me(ctx context.Context, token string) (User, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/auth/me", nil)
 	if err != nil {
-		return User{}, fmt.Errorf("build /me request: %w", err)
+		return User{}, fmt.Errorf("failed to build /auth/me request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {
-		return User{}, fmt.Errorf("send /me request: %w", err)
+		return User{}, fmt.Errorf("failed request to /auth/me: %w", err)
 	}
 	defer res.Body.Close()
 
@@ -47,7 +47,7 @@ func (c *Client) Me(ctx context.Context, token string) (User, error) {
 	case http.StatusOK:
 		var user User
 		if err := json.NewDecoder(res.Body).Decode(&user); err != nil {
-			return User{}, fmt.Errorf("decode /me response: %w", err)
+			return User{}, fmt.Errorf("failed to decode /auth/me response: %w", err)
 		}
 		return user, nil
 	case http.StatusUnauthorized:

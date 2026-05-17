@@ -19,15 +19,15 @@ var userGetCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fileStore, err := credstore.NewFileStore("")
 		if err != nil {
-			return fmt.Errorf("init credstore: %w", err)
+			return fmt.Errorf("failed to create new filestore: %w", err)
 		}
 
 		creds, err := fileStore.Load()
 		if err != nil {
 			if errors.Is(err, credstore.ErrNotFound) {
-				return errors.New("not logged in — run 'invosit login'")
+				return errors.New("not logged in. Run 'invosit login'")
 			}
-			return fmt.Errorf("load credentials: %w", err)
+			return fmt.Errorf("failed to load credentials: %w", err)
 		}
 
 		fmt.Printf("ID:    %s\n", creds.UserID)
