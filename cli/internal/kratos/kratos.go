@@ -40,30 +40,42 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
-// Returns session token
+// Login runs the kratos login flow. Returns session token
 func (c *Client) Login(ctx context.Context, email string, password string) (string, error) {
-	// Ory requires a call to begin a login flow before submitting login credentials.
-	// Read more: https://www.ory.com/docs/kratos/self-service/flows/user-login
+	flow, err := c.initLoginFlow(ctx)
+	if err != nil {
+		return "", err
+	}
 
-	// Initialize Flow
+	return c.submitCredentials(ctx, flow.UI.Action, email, password)
+}
+
+// initLoginFlow creates a new login flow from kratos
+// Read more about login flows: https://www.ory.com/docs/kratos/self-service/flows/user-login
+func (c *Client) initLoginFlow(ctx context.Context) (loginFlowResponse, error) {
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/self-service/login/api", nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create login flow request: %w", err)
+		return loginFlowResponse{}, fmt.Errorf("failed to create login flow request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 
 	res, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed request to login flow: %w", err)
+		return loginFlowResponse{}, fmt.Errorf("failed request to login flow: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	var flow loginFlowResponse
 	if err := json.NewDecoder(res.Body).Decode(&flow); err != nil {
-		return "", fmt.Errorf("failed to decode login flow response: %w", err)
+		return loginFlowResponse{}, fmt.Errorf("failed to decode login flow response: %w", err)
 	}
 
-	// Submit credentials
+	return flow, nil
+}
+
+// submitCredentials calls the login using the flow action. Returns session token
+func (c *Client) submitCredentials(ctx context.Context, action string, email string, password string) (string, error) {
 	body, err := json.Marshal(loginSubmitRequest{
 		Method:     "password",
 		Identifier: email,
@@ -73,29 +85,29 @@ func (c *Client) Login(ctx context.Context, email string, password string) (stri
 		return "", fmt.Errorf("failed to encode login submit body: %w", err)
 	}
 
-	loginReq, err := http.NewRequestWithContext(ctx, http.MethodPost, flow.UI.Action, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, action, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create login request: %w", err)
 	}
-	loginReq.Header.Set("Accept", "application/json")
-	loginReq.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 
-	loginRes, err := c.httpClient.Do(loginReq)
+	res, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed request to login: %w", err)
 	}
-	defer loginRes.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
-	switch loginRes.StatusCode {
+	switch res.StatusCode {
 	case http.StatusOK:
 		var out loginSubmitResponse
-		if err := json.NewDecoder(loginRes.Body).Decode(&out); err != nil {
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 			return "", fmt.Errorf("failed to decode login submit response: %w", err)
 		}
 		return out.SessionToken, nil
 	case http.StatusBadRequest:
 		return "", ErrInvalidCredentials
 	default:
-		return "", fmt.Errorf("login submit failed: status %d", loginRes.StatusCode)
+		return "", fmt.Errorf("login submit failed: status %d", res.StatusCode)
 	}
 }

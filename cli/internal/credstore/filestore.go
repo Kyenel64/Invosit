@@ -13,6 +13,7 @@ type FileStore struct {
 	path string
 }
 
+// NewFileStore returns a new filestore pathed to system user config directory or pathOverride.
 func NewFileStore(pathOverride string) (*FileStore, error) {
 	if pathOverride != "" {
 		return &FileStore{path: pathOverride}, nil
@@ -26,6 +27,7 @@ func NewFileStore(pathOverride string) (*FileStore, error) {
 
 func (s *FileStore) Path() string { return s.path }
 
+// Load returns credentials stored in invosit/credentials.json
 func (s *FileStore) Load() (Credentials, error) {
 	f, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -54,6 +56,7 @@ func (s *FileStore) Load() (Credentials, error) {
 	return c, nil
 }
 
+// Save stores credentials to invosit/credentials.json. Overwrites existing credential file
 func (s *FileStore) Save(c Credentials) error {
 	if c.Version == 0 {
 		c.Version = SchemaVersion
@@ -86,6 +89,7 @@ func (s *FileStore) Save(c Credentials) error {
 	return nil
 }
 
+// Clear deletes invosit/credentials.json if it exists
 func (s *FileStore) Clear() error {
 	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("failed to remove %s: %w", s.path, err)

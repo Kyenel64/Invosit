@@ -41,7 +41,7 @@ func (c *Client) Me(ctx context.Context, token string) (User, error) {
 	if err != nil {
 		return User{}, fmt.Errorf("failed request to /auth/me: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	switch res.StatusCode {
 	case http.StatusOK:
