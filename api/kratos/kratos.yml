@@ -8,7 +8,7 @@ serve:
     cors:
       enabled: true
       allowed_origins:
-        - http://127.0.0.1:8080
+        - http://127.0.0.1:5173
       allowed_methods:
         - GET
         - POST
@@ -29,9 +29,9 @@ serve:
     base_url: http://kratos:4434/
 
 selfservice:
-  default_browser_return_url: http://127.0.0.1:8080/
+  default_browser_return_url: http://127.0.0.1:5173/
   allowed_return_urls:
-    - http://127.0.0.1:8080
+    - http://127.0.0.1:5173
 
   methods:
     password:
@@ -45,9 +45,9 @@ selfservice:
 
   flows:
     error:
-      ui_url: http://127.0.0.1:8080/error
+      ui_url: http://127.0.0.1:5173/error
     settings:
-      ui_url: http://127.0.0.1:8080/settings
+      ui_url: http://127.0.0.1:5173/settings
       privileged_session_max_age: 15m
       required_aal: highest_available
     recovery:
@@ -56,12 +56,12 @@ selfservice:
       enabled: false
     logout:
       after:
-        default_browser_return_url: http://127.0.0.1:8080/
+        default_browser_return_url: http://127.0.0.1:5173/
     login:
-      ui_url: http://127.0.0.1:8080/login
+      ui_url: http://127.0.0.1:5173/login
       lifespan: 10m
     registration:
-      ui_url: http://127.0.0.1:8080/registration
+      ui_url: http://127.0.0.1:5173/registration
       lifespan: 10m
       after:
         password:
