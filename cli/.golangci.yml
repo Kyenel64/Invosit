@@ -1,0 +1,39 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  go: '1.25'  # golangci-lint v2.12.2 was built with Go 1.25; analyze code at that level
+
+linters:
+  default: none
+  enable:
+    - errcheck       # unchecked errors
+    - gosec          # security issues
+    - govet          # suspicious constructs
+    - ineffassign    # ineffective assignments
+    - staticcheck    # broad static analysis
+    - unused         # unused code
+    - misspell       # typos
+    - bodyclose      # http.Response.Body closed
+    - noctx          # http requests without context
+    - contextcheck   # context propagation
+  settings:
+    gosec:
+      excludes:
+        - G104  # duplicate of errcheck
+      severity: low
+      confidence: low
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - noctx
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
