@@ -275,46 +275,6 @@ func TestBrowserLoginExchangeError(t *testing.T) {
 	}
 }
 
-func TestBrowserLoginNoOpenPrintsURL(t *testing.T) {
-	ks := newExchangeKratos(t, "INIT_N", map[string]string{
-		"INIT_N|RT_noopen": "tok_noopen",
-	})
-	c := kratos.NewClient(ks.URL)
-	ln := listenLoopback(t)
-	addr := ln.Addr().String()
-	var stderr bytes.Buffer
-
-	// Once the CLI has printed the URL, simulate the browser hop.
-	go func() {
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if !strings.Contains(stderr.String(), "/login?flow=") {
-				time.Sleep(10 * time.Millisecond)
-				continue
-			}
-			hitLoopback(t, addr, "RT_noopen")
-			return
-		}
-	}()
-
-	tok, err := c.BrowserLogin(context.Background(), kratos.BrowserLoginOpts{
-		UIBaseURL: "http://ui.test",
-		Timeout:   5 * time.Second,
-		NoOpen:    true,
-		Stderr:    &stderr,
-		Listener:  ln,
-	})
-	if err != nil {
-		t.Fatalf("BrowserLogin: %v", err)
-	}
-	if tok != "tok_noopen" {
-		t.Errorf("token = %q, want tok_noopen", tok)
-	}
-	if !strings.Contains(stderr.String(), "Open this URL") {
-		t.Errorf("stderr should prompt the user; got %q", stderr.String())
-	}
-}
-
 func TestBrowserLoginRequiresUIBaseURL(t *testing.T) {
 	c := kratos.NewClient("http://kratos.invalid")
 	_, err := c.BrowserLogin(context.Background(), kratos.BrowserLoginOpts{})

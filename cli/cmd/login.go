@@ -19,8 +19,6 @@ const (
 	defaultUIURL     = "http://127.0.0.1:5173"
 )
 
-var loginFlagNoOpen bool
-
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to invosit",
@@ -66,7 +64,6 @@ var loginCmd = &cobra.Command{
 }
 
 func init() {
-	loginCmd.Flags().BoolVar(&loginFlagNoOpen, "no-open", false, "Print the login URL instead of opening a browser")
 	rootCmd.AddCommand(loginCmd)
 }
 
@@ -74,8 +71,6 @@ func runBrowserLogin(ctx context.Context, kratosURL string, stderr io.Writer) (s
 	client := kratos.NewClient(kratosURL)
 	token, err := client.BrowserLogin(ctx, kratos.BrowserLoginOpts{
 		UIBaseURL: defaultUIURL,
-		Timeout:   5 * time.Minute,
-		NoOpen:    loginFlagNoOpen,
 		Stderr:    stderr,
 	})
 	if err != nil {

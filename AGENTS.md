@@ -15,8 +15,8 @@ Invosit syncs encrypted files alongside a git repo — for files that shouldn't 
 | Component | Location | Status |
 |---|---|---|
 | API server (Go) | `api/` (own `go.mod`) | shipping |
-| CLI (Go) | `cli/` | not yet built |
-| Frontend (web dashboard) | `frontend/` | not yet built |
+| CLI (Go) | `cli/` | login commands |
+| Frontend (web dashboard) | `frontend/` | basic login page |
 | Docs | `docs/` | shared by all clients |
 
 Each component is self-contained under its own top-level directory. **Security
@@ -115,17 +115,22 @@ Safe to log: method, path, status, duration, user ID, workspace ID, IP, request 
 
 ## Security review checklist (CLI)
 
-The CLI doesn't exist yet, so most of this is forward-looking. When `cli/`
-diffs start landing, apply these:
+Most of this is still forward-looking — only auth has landed. When file
+sync diffs start landing, the encryption-related items become enforceable.
+
+**Already in code, flag regressions:**
+
+- **Session tokens at rest** are stored at `0600` via a write-temp-then-rename atomic swap in `cli/internal/credstore/filestore.go`. `Load` refuses any file with group/other bits set (POSIX). Flag any new write path that doesn't go through `FileStore.Save`, any code that prints the token to stdout/stderr, or any logging that includes a `Credentials` struct verbatim.
+- **Browser-login loopback** (`cli/internal/kratos/browserlogin.go`) binds `127.0.0.1:33405` only. Flag any change that listens on `0.0.0.0` or a non-loopback address. The `init_code` stays in CLI memory and is never written to disk or printed — keep it that way; the security model assumes a remote attacker who has stolen a `return_to_code` from the browser URL can't complete the exchange without it.
+- **`/auth/me` verification** runs after `BrowserLogin` returns. Flag any login path that saves credentials without first confirming the session token works against the API.
+
+**Forward-looking, becomes enforceable when file sync lands:**
 
 - **Encryption is the CLI's job.** AES-256-GCM with a fresh DEK per file. Never reuse a DEK across files or workspaces. Flag any code path that encrypts without a freshly generated DEK.
 - **Private keys never leave the host.** Only the user's public key gets sent to the API. Flag any code that uploads, logs, or transmits private key material.
 - **Wrapped DEKs are opaque.** The CLI unwraps DEKs locally using the user's private key. It must not log raw or wrapped DEK values.
-- **Session tokens at rest** must be stored with appropriate filesystem permissions (e.g. `0600` on Unix). Flag world-readable token files.
 - **Storage I/O is direct.** The CLI uploads/downloads encrypted blobs straight to the storage provider using signed URLs from the API. It must not proxy bytes through the API.
 - **Manifest (`.invosit.yaml`) is plaintext metadata only.** Never write key material, session tokens, or wrapped DEKs into the manifest — it's committed to git.
-
-This section grows when the CLI does. Add real flags as patterns emerge.
 
 ---
 

@@ -37,9 +37,3 @@ takes it from there.
 - `npm run build` — typecheck + production build to `dist/`
 - `npm run typecheck` — `tsc --noEmit` only
 - `npm run preview` — preview the production build
-
-## Scope
-
-Out of scope for now: registration, settings, error, and any post-login
-pages. Those land as separate branches. The CLI-side loopback handoff for
-`invosit login` is also a separate branch.

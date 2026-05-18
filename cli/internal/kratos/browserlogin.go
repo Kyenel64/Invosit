@@ -14,14 +14,13 @@ import (
 
 const LoopbackPort = 33405
 const LoopbackCallbackPath = "/callback"
-const DefaultBrowserLoginTimeout = 2 * time.Minute
+const DefaultBrowserLoginTimeout = 5 * time.Minute
 
 var ErrBrowserLoginTimeout = errors.New("browser login timed out")
 
 type BrowserLoginOpts struct {
 	UIBaseURL string
 	Timeout   time.Duration
-	NoOpen    bool
 	Stderr    io.Writer
 
 	OpenBrowser func(url string) error
@@ -116,11 +115,6 @@ func setupLoopback(ctx context.Context, opts BrowserLoginOpts) (string, <-chan c
 }
 
 func promptUserToSignIn(ctx context.Context, opts BrowserLoginOpts, loginURL string) {
-	if opts.NoOpen {
-		_, _ = fmt.Fprintf(opts.Stderr, "Open this URL in your browser to sign in:\n  %s\n", loginURL)
-		return
-	}
-
 	open := opts.OpenBrowser
 	if open == nil {
 		open = func(u string) error { return defaultOpenBrowser(ctx, u) }
