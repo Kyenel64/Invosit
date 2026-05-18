@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,6 +62,11 @@ func run(
 		return errors.New("KRATOS_WEBHOOK_SECRET is required")
 	}
 
+	var corsOrigins []string
+	if raw := getenv("CORS_ALLOWED_ORIGINS"); raw != "" {
+		corsOrigins = strings.Split(raw, ",")
+	}
+
 	database, err := db.Open(ctx, databaseURL)
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
@@ -92,7 +98,7 @@ func run(
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           NewServer(database, kc, blobs, kratosWebhookSecret),
+		Handler:           NewServer(database, kc, blobs, kratosWebhookSecret, corsOrigins),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -129,14 +135,18 @@ func run(
 // NewServer builds the application's http.Handler — mux, routes, and the
 // global middleware stack. Returned as a single http.Handler so callers
 // (and tests) only see one composed handler.
-func NewServer(database *sql.DB, kc *kratos.Client, blobs storage.Storage, webhookSecret string) http.Handler {
+func NewServer(database *sql.DB, kc *kratos.Client, blobs storage.Storage, webhookSecret string, corsOrigins []string) http.Handler {
 	mux := http.NewServeMux()
 	h := handler.New(database, kc, blobs, webhookSecret)
 	handler.AddRoutes(mux, h)
 
-	// request -> Recovery -> Logger -> BodyLimit -> mux -> handler
+	// request -> Recovery -> CORS -> Logger -> BodyLimit -> mux -> handler
+	// CORS sits ahead of Logger so preflight short-circuits don't fill logs
+	// with OPTIONS noise; behind Recovery so a panic during preflight still
+	// returns a clean 500.
 	chain := middleware.Chain(
 		middleware.Recovery,
+		middleware.CORS(middleware.CORSConfig{AllowedOrigins: corsOrigins}),
 		middleware.Logger,
 		middleware.BodyLimit(10<<20),
 	)
