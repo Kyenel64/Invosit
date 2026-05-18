@@ -2,13 +2,11 @@ package kratos
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"os/exec"
 	"runtime"
 	"time"
@@ -151,73 +149,42 @@ func waitForCode(ctx context.Context, codes <-chan callbackResult) (string, erro
 // initFlowWithExchangeCode initializes a Kratos API login flow with
 // return_to pointing at our loopback and return_session_token_exchange_code turned on.
 func (c *Client) initFlowWithExchangeCode(ctx context.Context, returnTo string) (flowID, initCode string, err error) {
-	u := fmt.Sprintf(
-		"%s/self-service/login/api?return_session_token_exchange_code=true&return_to=%s",
-		c.baseURL,
-		url.QueryEscape(returnTo),
-	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	flow, resp, err := c.sdk.FrontendAPI.CreateNativeLoginFlow(ctx).
+		ReturnSessionTokenExchangeCode(true).
+		ReturnTo(returnTo).
+		Execute()
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err != nil {
-		return "", "", fmt.Errorf("create init flow request: %w", err)
+		return "", "", fmt.Errorf("create native login flow: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
-
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("init flow request: %w", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-
-	if res.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("init flow: status %d", res.StatusCode)
-	}
-	var body struct {
-		ID                       string `json:"id"`
-		SessionTokenExchangeCode string `json:"session_token_exchange_code"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-		return "", "", fmt.Errorf("decode init flow response: %w", err)
-	}
-	if body.ID == "" || body.SessionTokenExchangeCode == "" {
+	flowID = flow.GetId()
+	initCode = flow.GetSessionTokenExchangeCode()
+	if flowID == "" || initCode == "" {
 		return "", "", errors.New("init flow response missing id or exchange code")
 	}
-	return body.ID, body.SessionTokenExchangeCode, nil
+	return flowID, initCode, nil
 }
 
 // exchangeSessionToken uses the initCode and returnToCode
 // to retrieve a session token from Kratos.
 func (c *Client) exchangeSessionToken(ctx context.Context, initCode, returnToCode string) (string, error) {
-	u := fmt.Sprintf(
-		"%s/sessions/token-exchange?init_code=%s&return_to_code=%s",
-		c.baseURL,
-		url.QueryEscape(initCode),
-		url.QueryEscape(returnToCode),
-	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	result, resp, err := c.sdk.FrontendAPI.ExchangeSessionToken(ctx).
+		InitCode(initCode).
+		ReturnToCode(returnToCode).
+		Execute()
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err != nil {
-		return "", fmt.Errorf("create exchange request: %w", err)
+		return "", fmt.Errorf("exchange session token: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
-
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("exchange request: %w", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-
-	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token exchange: status %d", res.StatusCode)
-	}
-	var body struct {
-		SessionToken string `json:"session_token"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-		return "", fmt.Errorf("decode exchange response: %w", err)
-	}
-	if body.SessionToken == "" {
+	token := result.GetSessionToken()
+	if token == "" {
 		return "", errors.New("exchange response missing session_token")
 	}
-	return body.SessionToken, nil
+	return token, nil
 }
 
 func defaultOpenBrowser(ctx context.Context, url string) error {

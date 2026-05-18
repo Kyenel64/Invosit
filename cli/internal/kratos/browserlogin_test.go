@@ -39,6 +39,12 @@ func newExchangeKratos(t *testing.T, initCode string, returnTokenFor map[string]
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
+	// Mock responses include every field the Ory SDK's generated structs
+	// mark `required` (LoginFlow: expires_at, id, issued_at, request_url,
+	// state, type, ui; UiContainer: action, method, nodes;
+	// SuccessfulNativeLogin: session; Session: id). Omitting any of these
+	// makes the SDK fail with "no value given for required property X" at
+	// decode time.
 	mux.HandleFunc("GET /self-service/login/api", func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("return_session_token_exchange_code"); got != "true" {
 			t.Errorf("return_session_token_exchange_code = %q, want true", got)
@@ -47,11 +53,19 @@ func newExchangeKratos(t *testing.T, initCode string, returnTokenFor map[string]
 			t.Errorf("return_to missing from init flow query")
 		}
 		w.Header().Set("Content-Type", "application/json")
+		now := time.Now().UTC().Format(time.RFC3339Nano)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":                          "flow-xyz",
+			"type":                        "api",
+			"expires_at":                  now,
+			"issued_at":                   now,
+			"request_url":                 srv.URL + "/self-service/login/api",
+			"state":                       "choose_method",
 			"session_token_exchange_code": initCode,
 			"ui": map[string]any{
 				"action": srv.URL + "/self-service/login?flow=flow-xyz",
+				"method": "POST",
+				"nodes":  []any{},
 			},
 		})
 	})
@@ -64,7 +78,11 @@ func newExchangeKratos(t *testing.T, initCode string, returnTokenFor map[string]
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"session_token": tok})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"session":       map[string]any{"id": "sess-1"},
+			"session_token": tok,
+		})
 	})
 
 	return srv
