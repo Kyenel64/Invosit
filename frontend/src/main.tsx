@@ -1,14 +1,28 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { routeTree } from "./routeTree.gen";
-import { AuthContextValue, AuthProvider, useAuth } from "./auth";
+import { AuthContextValue, useAuth } from "./auth";
 import "./styles.css";
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60 * 1000,
+      retry: 1,
+    },
+  },
+});
 
 const router = createRouter({
   routeTree,
   defaultPreload: "intent",
-  context: { auth: undefined! as AuthContextValue },
+  context: {
+    auth: undefined! as AuthContextValue,
+    queryClient,
+  },
 });
 
 declare module "@tanstack/react-router" {
@@ -19,7 +33,7 @@ declare module "@tanstack/react-router" {
 
 function InnerApp() {
   const auth = useAuth();
-  return <RouterProvider router={router} context={{ auth }} />;
+  return <RouterProvider router={router} context={{ auth, queryClient }} />;
 }
 
 const root = document.getElementById("root");
@@ -27,8 +41,9 @@ if (!root) throw new Error("missing #root");
 
 createRoot(root).render(
   <StrictMode>
-    <AuthProvider>
+    <QueryClientProvider client={queryClient}>
       <InnerApp />
-    </AuthProvider>
+      {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+    </QueryClientProvider>
   </StrictMode>,
 );

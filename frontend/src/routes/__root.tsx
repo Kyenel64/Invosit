@@ -1,8 +1,12 @@
 import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
+import type { QueryClient } from "@tanstack/react-query";
 import type { AuthContextValue } from "../auth";
 import { Header } from "../components/Header";
 
-export const Route = createRootRouteWithContext<{ auth: AuthContextValue }>()({
+export const Route = createRootRouteWithContext<{
+  auth: AuthContextValue;
+  queryClient: QueryClient;
+}>()({
   component: RootLayout,
 });
 
