@@ -9,7 +9,7 @@ import {
   listOidcProviders,
   submitOidcLogin,
   submitPasswordLogin,
-} from "../kratos";
+} from "../lib/kratos";
 
 export const Route = createFileRoute("/login")({
   component: Login,

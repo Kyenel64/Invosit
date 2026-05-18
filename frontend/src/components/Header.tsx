@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useAuth } from "../auth";
+import { useAuth } from "../lib/auth";
 
 export function Header() {
   const { state } = useAuth();

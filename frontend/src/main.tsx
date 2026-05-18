@@ -4,7 +4,7 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { routeTree } from "./routeTree.gen";
-import { AuthContextValue, useAuth } from "./auth";
+import { AuthContextValue, useAuth } from "./lib/auth";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -23,6 +23,8 @@ const router = createRouter({
     auth: undefined! as AuthContextValue,
     queryClient,
   },
+  defaultPreloadStaleTime: 0,
+  scrollRestoration: true,
 });
 
 declare module "@tanstack/react-router" {
