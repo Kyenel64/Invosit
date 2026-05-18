@@ -676,6 +676,8 @@ These apply across the monorepo. API-specific conventions are noted as such.
   generated with a small random helper — not UUIDs, not sequential integers
 - Return 403 not 404 for unauthorised access to existing resources
 - Validate all input at handler level before DB interaction
+- Comments: write none by default. Only add one when the WHY is non-obvious (hidden constraint, subtle invariant, workaround for a specific bug). Don't explain WHAT the code does; well-named identifiers cover that. Don't reference the current task, fix, or callers ("added for X flow", "used by Y caller"). When a comment is needed, prefer one short line.
+- No em dashes (`—`) anywhere. Use periods, commas, parens, or colons instead.
 
 ---
 

@@ -47,8 +47,6 @@ func TestCORSDisallowedOriginNoHeaders(t *testing.T) {
 	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("Allow-Origin = %q, want empty (origin not in allowlist)", got)
 	}
-	// The downstream handler still runs — the browser, not the server, is
-	// responsible for blocking on the missing header.
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
 	}
@@ -75,8 +73,7 @@ func TestCORSPreflightShortCircuit(t *testing.T) {
 }
 
 func TestCORSPlainOptionsNotPreflight(t *testing.T) {
-	// OPTIONS without Access-Control-Request-Method is a real OPTIONS
-	// request, not a preflight — must pass through to downstream handler.
+	// OPTIONS without Access-Control-Request-Method is a real request, not a preflight.
 	mux := http.NewServeMux()
 	mux.HandleFunc("OPTIONS /ping", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)

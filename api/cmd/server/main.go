@@ -141,9 +141,6 @@ func NewServer(database *sql.DB, kc *kratos.Client, blobs storage.Storage, webho
 	handler.AddRoutes(mux, h)
 
 	// request -> Recovery -> CORS -> Logger -> BodyLimit -> mux -> handler
-	// CORS sits ahead of Logger so preflight short-circuits don't fill logs
-	// with OPTIONS noise; behind Recovery so a panic during preflight still
-	// returns a clean 500.
 	chain := middleware.Chain(
 		middleware.Recovery,
 		middleware.CORS(middleware.CORSConfig{AllowedOrigins: corsOrigins}),
