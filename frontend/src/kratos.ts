@@ -1,35 +1,7 @@
-// Minimal client for Ory Kratos's self-service browser login flow.
-// Docs: https://www.ory.com/docs/kratos/self-service/flows/user-login
 
 const KRATOS_URL = "http://127.0.0.1:4433";
 
 export const LOGIN_BROWSER_INIT = `${KRATOS_URL}/self-service/login/browser`;
-export const WHOAMI = `${KRATOS_URL}/sessions/whoami`;
-
-export interface Identity {
-  id: string;
-  traits: { email?: string } & Record<string, unknown>;
-}
-
-export interface Session {
-  id: string;
-  active: boolean;
-  identity: Identity;
-}
-
-// whoami returns the current session if the browser has a valid Kratos
-// session cookie, or null if not signed in. Kratos returns 401 when no
-// session exists; treat that as "not signed in" rather than an error so
-// callers can branch cleanly.
-export async function whoami(): Promise<Session | null> {
-  const res = await fetch(WHOAMI, {
-    headers: { Accept: "application/json" },
-    credentials: "include",
-  });
-  if (res.status === 401 || res.status === 403) return null;
-  if (!res.ok) throw new Error(`whoami failed: ${res.status}`);
-  return res.json();
-}
 
 export interface UiText {
   id: number;
@@ -54,12 +26,6 @@ export interface UiNode {
 
 export interface LoginFlow {
   id: string;
-  // Kratos exposes the flow's type ("api" | "browser") on the flow
-  // object. When the CLI inits an API flow with
-  // return_session_token_exchange_code=true, the flow that lands on
-  // /login?flow=... carries type="api" plus return_to + the
-  // session_token_exchange_code. Use this to detect CLI mode and hide
-  // the password form (exchange-code only fires for OIDC).
   type?: "api" | "browser";
   return_to?: string;
   session_token_exchange_code?: string;
@@ -117,11 +83,6 @@ export interface SubmitFailure {
   flow: LoginFlow;
 }
 
-// listOidcProviders returns the OIDC submit buttons present in a flow.
-// Kratos adds one node per configured provider when the OIDC strategy
-// is enabled in kratos.yml. Each node's `attributes.value` is the
-// provider id we send back on submit; `meta.label.text` is a
-// human-readable label ("Sign in with github").
 export interface OidcProvider {
   id: string;
   label: string;
@@ -143,11 +104,6 @@ export function listOidcProviders(flow: LoginFlow): OidcProvider[] {
     }));
 }
 
-// submitOidcLogin starts the OIDC handoff. Submitting `provider=<id>`
-// to the flow action returns (with Accept: application/json) a
-// `redirect_browser_to` URL pointing at the IdP's authorize endpoint.
-// The caller navigates there; the browser then completes the OAuth
-// dance through the provider and back to Kratos's callback.
 export async function submitOidcLogin(
   flow: LoginFlow,
   providerId: string,
@@ -166,9 +122,6 @@ export async function submitOidcLogin(
     }),
   });
 
-  // Kratos returns 422 with a redirect_browser_to when the flow needs
-  // to bounce the user through the IdP. 200 here would mean a
-  // surprise — there's no path to a "synchronous" OIDC success.
   if (res.status === 422 || res.ok) {
     const body = (await res.json()) as { redirect_browser_to?: string };
     if (!body.redirect_browser_to) {

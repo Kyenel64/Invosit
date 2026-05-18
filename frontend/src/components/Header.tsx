@@ -1,22 +1,8 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { Session, whoami } from "../kratos";
-
-type AuthState =
-  | { status: "loading" }
-  | { status: "signed-in"; session: Session }
-  | { status: "signed-out" };
+import { useAuth } from "../auth";
 
 export function Header() {
-  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
-
-  useEffect(() => {
-    whoami()
-      .then((s) => {
-        setAuth(s ? { status: "signed-in", session: s } : { status: "signed-out" });
-      })
-      .catch(() => setAuth({ status: "signed-out" }));
-  }, []);
+  const { state } = useAuth();
 
   return (
     <header className="border-b border-gray-200 bg-white">
@@ -25,9 +11,9 @@ export function Header() {
           Invosit
         </Link>
         <nav>
-          {auth.status === "loading" ? (
+          {state.status === "loading" ? (
             <span className="text-sm text-gray-400">…</span>
-          ) : auth.status === "signed-in" ? (
+          ) : state.status === "signed-in" ? (
             <Link
               to="/dashboard"
               className="text-sm border rounded px-3 py-1.5 hover:bg-gray-50"
