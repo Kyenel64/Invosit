@@ -54,6 +54,15 @@ export interface UiNode {
 
 export interface LoginFlow {
   id: string;
+  // Kratos exposes the flow's type ("api" | "browser") on the flow
+  // object. When the CLI inits an API flow with
+  // return_session_token_exchange_code=true, the flow that lands on
+  // /login?flow=... carries type="api" plus return_to + the
+  // session_token_exchange_code. Use this to detect CLI mode and hide
+  // the password form (exchange-code only fires for OIDC).
+  type?: "api" | "browser";
+  return_to?: string;
+  session_token_exchange_code?: string;
   ui: {
     action: string;
     method: string;

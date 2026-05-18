@@ -32,6 +32,14 @@ selfservice:
   default_browser_return_url: http://127.0.0.1:5173/
   allowed_return_urls:
     - http://127.0.0.1:5173
+    # CLI browser-login loopback. The CLI inits an API flow with
+    # return_session_token_exchange_code=true&return_to=<this URL>; after
+    # the user signs in via OIDC, Kratos appends ?code=<return_to_code>
+    # and the CLI exchanges init_code + return_to_code via
+    # /sessions/token-exchange for a session_token. Pinned port because
+    # Kratos's URL matcher doesn't allow port wildcards.
+    - http://127.0.0.1:33405/callback
+    - http://localhost:33405/callback
 
   methods:
     password:
