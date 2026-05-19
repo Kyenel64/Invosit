@@ -32,7 +32,7 @@ This repo (`github.com/kyenel64/invosit`) is a monorepo holding three product co
 | Component | Location | Status |
 |---|---|---|
 | **API server** | `api/` (Go) | shipping — most of this file describes it |
-| **CLI** | `cli/` (Go, planned) | not yet built — see "The CLI" section below for intent |
+| **CLI** | `cli/` (Go) | login only — file sync not yet built (see "The CLI" section below) |
 | **Frontend** | `frontend/` (web dashboard, planned) | not yet built — see "The frontend" section below for intent |
 | **Documentation** | `docs/` | shared between all clients |
 
@@ -116,7 +116,7 @@ invosit/                          # monorepo root
 │   ├── go.sum
 │   ├── Dockerfile
 │   └── .golangci.yml
-├── cli/                          # Go CLI — handles encryption (planned)
+├── cli/                          # Go CLI — login shipped; encryption + file sync planned
 ├── frontend/                     # web dashboard (planned)
 ├── docs/
 │   └── openapi.yaml              # OpenAPI 3.0 spec — shared by API + CLI + frontend
@@ -296,13 +296,45 @@ Full request/response schemas in `docs/openapi.yaml`.
 
 ## The CLI
 
-Not yet built. When it lands it will live in `cli/` in this repo.
+> All paths in this section are relative to `cli/` unless otherwise noted.
 
-### Responsibilities (intended)
+Lives in `cli/` with its own `go.mod` (`github.com/kyenel64/invosit/cli`).
+Built on Cobra; structured the same way as the API server with thin
+`internal/` packages and dependencies injected at the `cmd/` layer.
+
+### Today
+
+- **`invosit login`** — browser-based OIDC sign-in via Kratos's native-app
+  exchange-code flow. The CLI opens the frontend's `/login?flow=<id>` page,
+  the user signs in with GitHub, and Kratos redirects the browser back to
+  a loopback listener on `127.0.0.1:33405/callback`. The CLI then trades
+  the `init_code` (kept in memory) + `return_to_code` (from the redirect)
+  for a session token via Kratos's `/sessions/token-exchange`.
+  See `internal/kratos/browserlogin.go`; docs:
+  https://www.ory.com/docs/kratos/social-signin/native-apps.
+- **`invosit user get`** — prints the local user id + email from the saved
+  credentials.
+- **Credentials at rest** — `credstore.FileStore` writes
+  `<user-config-dir>/invosit/credentials.json` at `0600` via a
+  write-temp-then-rename atomic swap, and refuses to load files with
+  group/other bits set (POSIX only).
+- **API client** — `internal/apiclient` calls `/auth/me` to verify the
+  session token before saving credentials; this is the only API surface
+  the CLI talks to today.
+
+The loopback port is fixed at `33405` and listed in `kratos.yml`'s
+`allowed_return_urls`. Kratos's URL matcher doesn't accept port wildcards,
+so this can't be randomized per-invocation.
+
+CLI-init API flows can only finish via OIDC — Kratos's exchange-code
+mechanism doesn't fire for the password method, so the frontend hides the
+password form when a flow has `session_token_exchange_code` set. Password
+login through the CLI is not a planned feature.
+
+### Planned
 
 - **Encryption boundary.** All AES-256-GCM encryption/decryption of file contents happens here, not in the API. Generates per-file DEKs and wraps each with the recipient's public key (sourced from `users.public_key` via the API).
 - **Manifest management.** Reads and writes `.invosit.yaml` in the working directory — the file committed to git that lists which files belong to the workspace, their paths, and current content hashes.
-- **Auth.** Authenticates against Kratos directly via the **API flow** (`POST /self-service/login/api`); stores the returned `session_token` locally and sends it as `Authorization: Bearer <token>` on every API request.
 - **Storage I/O.** Uploads/downloads encrypted blobs **directly** to the storage provider using short-lived signed URLs issued by the API. Bytes never pass through the API server.
 - **Local key material.** Generates and stores the user's keypair locally; the public key gets registered with the API on first run, the private key never leaves the machine.
 
@@ -311,10 +343,9 @@ Not yet built. When it lands it will live in `cli/` in this repo.
 - `docs/openapi.yaml` — single source of truth for request/response shapes. The CLI generates or hand-writes a client off this; the API serves it.
 - ID prefix conventions (`ws_`, `usr_`, `file_`, `ver_`, `grant_`, `log_`).
 - Error code stability — the API returns short stable codes (`NOT_FOUND`, `INVALID_REQUEST`, etc.) that the CLI maps to user-facing messages.
-
-When the CLI starts taking shape, the structure tree above gets an expanded
-`cli/` subtree, this section grows real entry points and commands, and
-"Running locally" splits into per-component subsections.
+- Both clients wrap Ory's `client-go` SDK in a thin local package
+  (`api/internal/kratos` and `cli/internal/kratos`) so the SDK surface
+  stays contained.
 
 ---
 
@@ -645,6 +676,8 @@ These apply across the monorepo. API-specific conventions are noted as such.
   generated with a small random helper — not UUIDs, not sequential integers
 - Return 403 not 404 for unauthorised access to existing resources
 - Validate all input at handler level before DB interaction
+- Comments: write none by default. Only add one when the WHY is non-obvious (hidden constraint, subtle invariant, workaround for a specific bug). Don't explain WHAT the code does; well-named identifiers cover that. Don't reference the current task, fix, or callers ("added for X flow", "used by Y caller"). When a comment is needed, prefer one short line.
+- No em dashes (`—`) anywhere. Use periods, commas, parens, or colons instead.
 
 ---
 
@@ -657,10 +690,20 @@ cd api && go run ./cmd/server    # starts API on :8080
 ```
 
 Each Go-based component has its own `go.mod`, so Go commands (`go run`,
-`go test`, `go build`) run from inside the component directory — `api/`
-today, `cli/` later. There is no root-level `go.work` yet; we'll add one
-if/when working across modules simultaneously becomes routine.
+`go test`, `go build`) run from inside the component directory. A
+root-level `go.work` ties `api/` and `cli/` together for editor tooling;
+CI still operates per-module.
 
 Migrations run automatically on startup.
 
-CLI and frontend build instructions will go here when those components exist.
+CLI dev — once the API + Kratos stack is up, build and run the CLI from
+`cli/`:
+
+```bash
+cd cli
+go build -o invosit .
+./invosit login                 # opens browser to http://127.0.0.1:5173/login?flow=…
+./invosit user get
+```
+
+Frontend build instructions live in `frontend/README.md`.

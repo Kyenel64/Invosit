@@ -8,7 +8,7 @@ serve:
     cors:
       enabled: true
       allowed_origins:
-        - http://127.0.0.1:8080
+        - http://127.0.0.1:5173
       allowed_methods:
         - GET
         - POST
@@ -29,9 +29,17 @@ serve:
     base_url: http://kratos:4434/
 
 selfservice:
-  default_browser_return_url: http://127.0.0.1:8080/
+  default_browser_return_url: http://127.0.0.1:5173/
   allowed_return_urls:
-    - http://127.0.0.1:8080
+    - http://127.0.0.1:5173
+    # CLI browser-login loopback. The CLI inits an API flow with
+    # return_session_token_exchange_code=true&return_to=<this URL>; after
+    # the user signs in via OIDC, Kratos appends ?code=<return_to_code>
+    # and the CLI exchanges init_code + return_to_code via
+    # /sessions/token-exchange for a session_token. Pinned port because
+    # Kratos's URL matcher doesn't allow port wildcards.
+    - http://127.0.0.1:33405/callback
+    - http://localhost:33405/callback
 
   methods:
     password:
@@ -42,12 +50,29 @@ selfservice:
       enabled: false
     code:
       enabled: false
+    oidc:
+      enabled: true
+      config:
+        providers:
+          - id: github
+            provider: github
+            # client_id / client_secret are placeholders; the real
+            # values come from GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET
+            # via Kratos's uppercase-path env override in
+            # docker-compose.yml — same pattern as the other secrets.
+            client_id: REPLACE_WITH_GITHUB_CLIENT_ID
+            client_secret: REPLACE_WITH_GITHUB_CLIENT_SECRET
+            mapper_url: file:///etc/config/kratos/oidc.github.jsonnet
+            # `user:email` is required to read the user's primary
+            # verified email from GitHub's /user/emails endpoint.
+            scope:
+              - user:email
 
   flows:
     error:
-      ui_url: http://127.0.0.1:8080/error
+      ui_url: http://127.0.0.1:5173/error
     settings:
-      ui_url: http://127.0.0.1:8080/settings
+      ui_url: http://127.0.0.1:5173/settings
       privileged_session_max_age: 15m
       required_aal: highest_available
     recovery:
@@ -56,15 +81,34 @@ selfservice:
       enabled: false
     logout:
       after:
-        default_browser_return_url: http://127.0.0.1:8080/
+        default_browser_return_url: http://127.0.0.1:5173/
     login:
-      ui_url: http://127.0.0.1:8080/login
+      ui_url: http://127.0.0.1:5173/login
       lifespan: 10m
     registration:
-      ui_url: http://127.0.0.1:8080/registration
+      ui_url: http://127.0.0.1:5173/registration
       lifespan: 10m
       after:
         password:
+          hooks:
+            - hook: web_hook
+              config:
+                url: http://api:8080/internal/hooks/kratos/after-registration
+                method: POST
+                body: file:///etc/config/kratos/hooks/after-registration.jsonnet
+                response:
+                  ignore: false
+                auth:
+                  type: api_key
+                  config:
+                    name: X-Kratos-Webhook-Secret
+                    value: REPLACE_WITH_KRATOS_WEBHOOK_SECRET
+                    in: header
+            - hook: session
+        # OIDC signups need the same webhook hop as password signups —
+        # without this, GitHub sign-in creates a Kratos identity but no
+        # local `users` row, and the API will 401 the user.
+        oidc:
           hooks:
             - hook: web_hook
               config:

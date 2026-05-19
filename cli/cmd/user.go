@@ -20,8 +20,9 @@ var userGetCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("ID:    %s\n", creds.UserID)
-		fmt.Printf("Email: %s\n", creds.Email)
+		out := cmd.OutOrStdout()
+		_, _ = fmt.Fprintf(out, "ID:    %s\n", creds.UserID)
+		_, _ = fmt.Fprintf(out, "Email: %s\n", creds.Email)
 		return nil
 	},
 }

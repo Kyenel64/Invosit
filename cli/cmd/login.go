@@ -1,61 +1,41 @@
 package cmd
 
 import (
-	"bufio"
+	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
+	"io"
 	"time"
 
 	"github.com/kyenel64/invosit/cli/internal/apiclient"
 	"github.com/kyenel64/invosit/cli/internal/credstore"
 	"github.com/kyenel64/invosit/cli/internal/kratos"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
+)
+
+const (
+	defaultKratosURL = "http://localhost:4433"
+	defaultAPIURL    = "http://localhost:8080"
+	defaultUIURL     = "http://127.0.0.1:5173"
 )
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Login to your invosit account",
+	Short: "Login to invosit",
 	RunE: func(cmd *cobra.Command, args []string) error {
-
-		// --- Build filestore ---
 		fileStore, err := credstore.NewFileStore("")
 		if err != nil {
 			return fmt.Errorf("failed to create new filestore: %w", err)
 		}
 
-		// --- Prompt email + password ---
-		reader := bufio.NewReader(os.Stdin)
-
-		fmt.Print("Email: ")
-		email, err := reader.ReadString('\n')
+		token, err := runBrowserLogin(cmd.Context(), defaultKratosURL, cmd.ErrOrStderr())
 		if err != nil {
-			return fmt.Errorf("failed to read email input: %w", err)
-		}
-		email = strings.TrimSpace(email)
-
-		fmt.Print("Password: ")
-		passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println()
-		if err != nil {
-			return fmt.Errorf("failed to read password: %w", err)
-		}
-		password := string(passwordBytes)
-
-		// --- Call login ---
-		kratosClient := kratos.NewClient("http://localhost:4433") // TODO: config kratosURL
-		token, err := kratosClient.Login(cmd.Context(), email, password)
-		if err != nil {
-			if errors.Is(err, kratos.ErrInvalidCredentials) {
-				return errors.New("invalid email or password")
-			}
 			return err
 		}
 
-		// --- Retrieve user id ---
-		apiClient := apiclient.NewClient("http://localhost:8080")
+		// Check we got a valid session token and user exists in invosit db.
+		// We also need this to get our email and user id.
+		apiClient := apiclient.NewClient(defaultAPIURL)
 		user, err := apiClient.Me(cmd.Context(), token)
 		if err != nil {
 			if errors.Is(err, apiclient.ErrUnauthorized) {
@@ -64,25 +44,40 @@ var loginCmd = &cobra.Command{
 			return err
 		}
 
-		// --- Save credentials ---
+		// Save our credentials to os config path (or override path)
 		err = fileStore.Save(credstore.Credentials{
 			Version:      credstore.SchemaVersion,
-			Email:        email,
+			Email:        user.Email,
 			UserID:       user.ID,
 			SessionToken: token,
-			KratosURL:    "http://localhost:4433",
-			APIURL:       "http://localhost:8080",
+			KratosURL:    defaultKratosURL,
+			APIURL:       defaultAPIURL,
 			SavedAt:      time.Now(),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to save credentials: %w", err)
 		}
 
-		fmt.Printf("logged in as %s\n", user.Email)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "logged in as %s\n", user.Email)
 		return nil
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(loginCmd)
+}
+
+func runBrowserLogin(ctx context.Context, kratosURL string, stderr io.Writer) (string, error) {
+	client := kratos.NewClient(kratosURL)
+	token, err := client.BrowserLogin(ctx, kratos.BrowserLoginOpts{
+		UIBaseURL: defaultUIURL,
+		Stderr:    stderr,
+	})
+	if err != nil {
+		if errors.Is(err, kratos.ErrBrowserLoginTimeout) {
+			return "", errors.New("browser sign-in timed out, try again")
+		}
+		return "", err
+	}
+	return token, nil
 }
