@@ -3,12 +3,16 @@ const KRATOS_URL = "http://127.0.0.1:4433";
 
 export const LOGIN_BROWSER_INIT = `${KRATOS_URL}/self-service/login/browser`;
 
+// Must match Kratos' text ui shape
+// Read more: https://www.ory.com/docs/kratos/self-service/flows/user-login
 export interface UiText {
   id: number;
   type: "info" | "error" | "success";
   text: string;
 }
 
+// Must match Kratos' node attributes shape.
+// Read more: https://www.ory.com/docs/kratos/self-service/flows/user-login
 export interface UiNodeAttributes {
   name?: string;
   type?: string;
@@ -17,6 +21,8 @@ export interface UiNodeAttributes {
   disabled?: boolean;
 }
 
+// Must match Kratos' node shape.
+// Read more: https://www.ory.com/docs/kratos/self-service/flows/user-login
 export interface UiNode {
   type: string;
   group: string;
@@ -24,6 +30,8 @@ export interface UiNode {
   messages?: UiText[];
 }
 
+// Must match Kratos' login flow shape.
+// Read more: https://www.ory.com/docs/kratos/self-service/flows/user-login
 export interface LoginFlow {
   id: string;
   type?: "api" | "browser";
@@ -49,6 +57,7 @@ export class FlowExpiredError extends Error {
   }
 }
 
+// Read more about login flows: https://www.ory.com/docs/kratos/self-service/flows/user-login
 export async function fetchLoginFlow(flowId: string): Promise<LoginFlow> {
   const res = await fetch(
     `${KRATOS_URL}/self-service/login/flows?id=${encodeURIComponent(flowId)}`,
@@ -87,6 +96,7 @@ export interface OidcProvider {
   id: string;
   label: string;
 }
+
 export function listOidcProviders(flow: LoginFlow): OidcProvider[] {
   return flow.ui.nodes
     .filter(
@@ -104,10 +114,7 @@ export function listOidcProviders(flow: LoginFlow): OidcProvider[] {
     }));
 }
 
-export async function submitOidcLogin(
-  flow: LoginFlow,
-  providerId: string,
-): Promise<string> {
+export async function submitOidcLogin(flow: LoginFlow, providerId: string): Promise<string> {
   const res = await fetch(flow.ui.action, {
     method: flow.ui.method,
     credentials: "include",
@@ -135,11 +142,7 @@ export async function submitOidcLogin(
   throw new Error(`OIDC submit failed: ${res.status}`);
 }
 
-export async function submitPasswordLogin(
-  flow: LoginFlow,
-  identifier: string,
-  password: string,
-): Promise<SubmitResult | SubmitFailure> {
+export async function submitPasswordLogin(flow: LoginFlow, identifier: string, password: string): Promise<SubmitResult | SubmitFailure> {
   const res = await fetch(flow.ui.action, {
     method: flow.ui.method,
     credentials: "include",
