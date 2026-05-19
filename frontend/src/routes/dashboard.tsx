@@ -1,10 +1,16 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { UnauthorizedError } from "../lib/api";
+import { meQueryOptions } from "../lib/auth";
 
 export const Route = createFileRoute("/dashboard")({
-  beforeLoad: ({ context }) => {
-    if (context.auth.state.status === "loading") return;
-    if (context.auth.state.status !== "signed-in") {
-      throw redirect({ to: "/login" });
+  beforeLoad: async ({ context }) => {
+    try {
+      await context.queryClient.ensureQueryData(meQueryOptions);
+    } catch (err) {
+      if (err instanceof UnauthorizedError) {
+        throw redirect({ to: "/login" });
+      }
+      throw err;
     }
   },
   component: Dashboard,
